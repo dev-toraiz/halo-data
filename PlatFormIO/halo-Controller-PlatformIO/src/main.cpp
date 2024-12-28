@@ -4,10 +4,27 @@
 #include <Arduino.h>
 #include <SPI.h>
 
+// SDA（データライン）: GPIO21
+// SCL（クロックライン）: GPIO22
 
 #define CHANNELS 6    // 使用するチャネル数
 #define SYNC_GAP 3000 // 同期信号判定のしきい値 (マイクロ秒)
 #define PPM_PIN 4     // PPM信号の入力ピン
+
+const int ledPin1 = 18; // LED1が接続されているピン番号
+const int ledPin2 = 19; // LED2が接続されているピン番号
+// 状態を定義
+enum Status
+{
+  All_On,
+  All_Off,
+  Slow_Blink,
+  Alternating_1,
+  Alternating_2,
+  Alternating_3,
+  Flash
+};
+Status currentStatus = All_On; // 初期ステータス
 
 MPU6050 mpu;
 Madgwick MadgwickFilter;
@@ -19,10 +36,10 @@ volatile int currentChannel = 0;            // 現在のチャネルインデッ
 #define LOOP_TIMING 100
 
 // モーターピン定義
-#define m1Pin 16
-#define m2Pin 17
-#define m3Pin 18
-#define m4Pin 19
+#define m1Pin 32
+#define m2Pin 25
+#define m3Pin 26
+#define m4Pin 27
 
 // PWM設定
 const int pwmFrequency = 50;  // 50Hz (20ms周期、一般的なESCに対応)
@@ -115,8 +132,8 @@ unsigned long volA, volB;
 
 int m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM;
 
-//関数を宣言
-// プロトタイプ宣言（関数宣言）
+// 関数を宣言
+//  プロトタイプ宣言（関数宣言）
 void calibrateESCs();
 void setMotorPWM(int m1, int m2, int m3, int m4);
 void loopDrone();
@@ -134,7 +151,6 @@ void printGyro();
 void printRollPitchYaw();
 void printPIDoutput();
 void printMotorCommands();
-
 
 // Read the number of a given channel and convert to the range provided.
 // If the channel is off, return the default value
@@ -175,9 +191,112 @@ void IRAM_ATTR ppmInterrupt()
   }
 }
 
+
+// 点滅パターンを設定する関数
+void setLedPattern(Status status)
+{
+  switch (status)
+  {
+  case All_On:
+    digitalWrite(ledPin1, HIGH);
+    digitalWrite(ledPin2, HIGH);
+    break;
+
+  case All_Off:
+    digitalWrite(ledPin1, LOW);
+    digitalWrite(ledPin2, LOW);
+    break;
+
+  case Slow_Blink:
+    digitalWrite(ledPin1, HIGH);
+    digitalWrite(ledPin2, HIGH);
+    delay(1000);
+    digitalWrite(ledPin1, LOW);
+    digitalWrite(ledPin2, LOW);
+    delay(1000);
+    break;
+
+  case Alternating_1:
+    digitalWrite(ledPin1, HIGH);
+    digitalWrite(ledPin2, LOW);
+    delay(100);
+    digitalWrite(ledPin1, LOW);
+    digitalWrite(ledPin2, HIGH);
+    delay(100);
+    break;
+
+  case Alternating_2:
+    digitalWrite(ledPin1, HIGH);
+    digitalWrite(ledPin2, LOW);
+    delay(100);
+    digitalWrite(ledPin1, LOW);
+    delay(100);
+    digitalWrite(ledPin1, HIGH);
+    delay(100);
+
+    digitalWrite(ledPin1, LOW);
+    digitalWrite(ledPin2, HIGH);
+    delay(100);
+    digitalWrite(ledPin2, LOW);
+    delay(100);
+    digitalWrite(ledPin2, HIGH);
+    delay(100);
+    break;
+
+  case Alternating_3:
+    digitalWrite(ledPin1, HIGH);
+    digitalWrite(ledPin2, LOW);
+    delay(100);
+    digitalWrite(ledPin1, LOW);
+    delay(100);
+    digitalWrite(ledPin1, HIGH);
+    delay(100);
+    digitalWrite(ledPin1, LOW);
+    delay(100);
+    digitalWrite(ledPin1, HIGH);
+    delay(100);
+
+    digitalWrite(ledPin1, LOW);
+    digitalWrite(ledPin2, HIGH);
+    delay(100);
+    digitalWrite(ledPin2, LOW);
+    delay(100);
+    digitalWrite(ledPin2, HIGH);
+    delay(100);
+    digitalWrite(ledPin2, LOW);
+    delay(100);
+    digitalWrite(ledPin2, HIGH);
+    delay(100);
+    break;
+    ;
+
+  case Flash:
+    digitalWrite(ledPin1, HIGH);
+    digitalWrite(ledPin2, LOW);
+    delay(50);
+    digitalWrite(ledPin1, LOW);
+    delay(1000);
+
+    digitalWrite(ledPin2, HIGH);
+    digitalWrite(ledPin1, LOW);
+    delay(50);
+    digitalWrite(ledPin2, LOW);
+    delay(1000);
+    break;
+  }
+}
+
+
 void setup()
 {
   Serial.begin(115200);
+
+  // ピンモードを設定
+  pinMode(ledPin1, OUTPUT);
+  pinMode(ledPin2, OUTPUT);
+  // 初期ステータスを設定
+  currentStatus = All_On;
+  setLedPattern(currentStatus);
 
   // レシーバー
   pinMode(PPM_PIN, INPUT_PULLUP);                 // ピンを入力モードに設定
@@ -216,12 +335,15 @@ void setup()
 
   // 全てのモーターを最小値で初期化
   setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min);
-
-  delay(4000); // 安定のための遅延
+  delay(2000); // 安定のための遅延
+  currentStatus = Flash;
 }
 
 void loop()
 {
+
+  // 現在のステータスに応じてLEDパターンを変更
+  setLedPattern(currentStatus);
   currentMillis = millis();
 
   if (currentMillis - previousMillis > 0)
@@ -230,7 +352,7 @@ void loop()
     frameRate = 1000.0 / (currentMillis - previousMillis);
 
     // Print the frame rate to the serial monitor
-    Serial.println(frameRate);
+    //Serial.println(frameRate);
 
     // Update previousMillis for the next loop
     previousMillis = currentMillis;
@@ -251,11 +373,11 @@ void loopDrone()
   commandMotors();                                        // Sends command pulses to each ESC pin to drive the motors
   getRadioSticks();                                       // Gets the PWM from the radio receiver
 
-  printAcc();
-  printGyro();
-  printRollPitchYaw();
-  printPIDoutput();
-  printMotorCommands();
+  //printAcc();
+  //printGyro();
+  //printRollPitchYaw();
+  //printPIDoutput();
+  //printMotorCommands();
 }
 
 // チャネル値を取得するヘルパー関数
@@ -446,27 +568,27 @@ void calibrateESCs()
 {
   // ESCキャリブレーション用に全てのモーターを最大スロットルに設定
   setMotorPWM(throttle_max, throttle_max, throttle_max, throttle_max);
-  delay(20000);
+  delay(2000);
 
   // ESCキャリブレーション用に全てのモーターを最小スロットルに設定
   setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min);
-  delay(20000);
+  delay(2000);
 }
 
 // モーターPWM信号を設定する関数
-void setMotorPWM(int m1, int m2, int m3, int m4) {
-    int duty1 = map(m1, 1000, 2000, 0, 65535);
-    int duty2 = map(m2, 1000, 2000, 0, 65535);
-    int duty3 = map(m3, 1000, 2000, 0, 65535);
-    int duty4 = map(m4, 1000, 2000, 0, 65535);
+void setMotorPWM(int m1, int m2, int m3, int m4)
+{
+  int duty1 = map(m1, 1000, 2000, 0, 65535);
+  int duty2 = map(m2, 1000, 2000, 0, 65535);
+  int duty3 = map(m3, 1000, 2000, 0, 65535);
+  int duty4 = map(m4, 1000, 2000, 0, 65535);
 
-    // 修正: PWMチャネル (0～3) を指定
-    ledcWrite(0, duty1);
-    ledcWrite(1, duty2);
-    ledcWrite(2, duty3);
-    ledcWrite(3, duty4);
+  // 修正: PWMチャネル (0～3) を指定
+  ledcWrite(0, duty1);
+  ledcWrite(1, duty2);
+  ledcWrite(2, duty3);
+  ledcWrite(3, duty4);
 }
-
 
 void printRollPitchYaw()
 {
