@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-const int escPins[] = {16, 17, 18, 19}; // ESCを接続したGPIOピン
+const int escPins[] = {32,25,26,27}; // ESCを接続したGPIOピン
 const int numMotors = 4; // モーターの数
 int throttle[numMotors] = {1023, 1023, 1023, 1023}; // 現在のスロットル値
 int targetThrottle[numMotors] = {512, 512, 512, 512}; // 目標のスロットル値
@@ -11,7 +11,7 @@ const int minThrottle = 512; // 最小のスロットル値
 
 void setup() {
   // シリアル通信の開始
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("\n\n\n\n\n\n\nキャリブレーション開始");
 
   // ESCのセットアップ

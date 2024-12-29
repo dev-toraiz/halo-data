@@ -3,6 +3,7 @@
 #include <MPU6050.h>
 #include <Arduino.h>
 #include <SPI.h>
+#include <ESP32Servo.h>
 
 // SDA（データライン）: GPIO21
 // SCL（クロックライン）: GPIO22
@@ -36,17 +37,26 @@ volatile int currentChannel = 0;            // 現在のチャネルインデッ
 #define LOOP_TIMING 100
 
 // モーターピン定義
-#define m1Pin 32
-#define m2Pin 25
-#define m3Pin 26
-#define m4Pin 27
+#define m1Pin 25
+#define m2Pin 26
+#define m3Pin 27
+#define m4Pin 32
+Servo ESC1; // サーボオブジェクトを作成
+Servo ESC2;
+Servo ESC3;
+Servo ESC4;
 
 // PWM設定
 const int pwmFrequency = 50;  // 50Hz (20ms周期、一般的なESCに対応)
 const int pwmResolution = 16; // 16ビット解像度
 
-const int throttle_max = 1923; // 最大PWM
-const int throttle_min = 900;  // 最小PWM
+const int throttle_max = 2000; // 最大PWM
+const int throttle_min = 1000; // 最小PWM
+
+const int morter1_buffer = 0;
+const int morter2_buffer = 280;
+const int morter3_buffer = 150;
+const int morter4_buffer = 0;
 
 // madgwick
 float B_madgwick = 0.04; //(default 0.04)
@@ -110,6 +120,24 @@ float PitchError = 4.0;
 
 float rollPIDError = -0.02;
 float pitchPIDError = 0.00;
+
+int MPU6050_ADDR = 0x68;
+int16_t raw_acc_x, raw_acc_y, raw_acc_z, raw_t, raw_gyro_x, raw_gyro_y, raw_gyro_z;
+float acc_x, acc_y, acc_z, acc_angle_x, acc_angle_y;
+double gyro_angle_x = 0, gyro_angle_y = 0, gyro_angle_z = 0;
+float interval, preInterval;
+double offsetX = 0, offsetY = 0, offsetZ = 0;
+float angleX, angleY, angleZ;
+float dpsX, dpsY, dpsZ;
+double init_angleX = 0, init_angleY = 0, init_angleZ = 0;
+volatile float rel_angleX, rel_angleY, rel_angleZ;
+float gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick;
+
+#define MPU6050_SMPLRT_DIV 0x19
+#define MPU6050_CONFIG 0x1a
+#define MPU6050_GYRO_CONFIG 0x1b
+#define MPU6050_ACCEL_CONFIG 0x1c
+#define MPU6050_PWR_MGMT_1 0x6b
 
 // Normalized desired state:
 float thro_des, roll_des, pitch_des, yaw_des;
@@ -190,7 +218,6 @@ void IRAM_ATTR ppmInterrupt()
     }
   }
 }
-
 
 // 点滅パターンを設定する関数
 void setLedPattern(Status status)
@@ -286,6 +313,118 @@ void setLedPattern(Status status)
   }
 }
 
+void AcceleroMeterAddressSetup()
+{
+  byte error, address;
+  int nDevices = 0;
+  for (address = 1; address < 127; address++)
+  {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+    if (error == 0)
+    {
+      if (address < 16)
+        MPU6050_ADDR = address;
+      nDevices++;
+    }
+  }
+}
+
+void AcceleroMeterWireRead()
+{
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU6050_ADDR, 14, true);
+  raw_acc_x = Wire.read() << 8 | Wire.read();
+  raw_acc_y = Wire.read() << 8 | Wire.read();
+  raw_acc_z = Wire.read() << 8 | Wire.read();
+  raw_t = Wire.read() << 8 | Wire.read();
+  raw_gyro_x = Wire.read() << 8 | Wire.read();
+  raw_gyro_y = Wire.read() << 8 | Wire.read();
+  raw_gyro_z = Wire.read() << 8 | Wire.read();
+}
+
+void calcRotation()
+{
+  acc_x = ((float)raw_acc_x) / 16384.0;
+  acc_y = ((float)raw_acc_y) / 16384.0;
+  acc_z = ((float)raw_acc_z) / 16384.0;
+  acc_angle_y = atan2(acc_x, acc_z + abs(acc_y)) * 360 / -2.0 / PI;
+  acc_angle_x = atan2(acc_y, acc_z + abs(acc_x)) * 360 / 2.0 / PI;
+  dpsX = ((float)raw_gyro_x) / 65.5;
+  dpsY = ((float)raw_gyro_y) / 65.5;
+  dpsZ = ((float)raw_gyro_z) / 65.5;
+  interval = millis() - preInterval;
+  preInterval = millis();
+  gyro_angle_x += (dpsX - offsetX) * (interval * 0.001);
+  gyro_angle_y += (dpsY - offsetY) * (interval * 0.001);
+  gyro_angle_z += (dpsZ - offsetZ) * (interval * 0.001);
+  angleX = (0.996 * gyro_angle_x) + (0.004 * acc_angle_x);
+  angleY = (0.996 * gyro_angle_y) + (0.004 * acc_angle_y);
+  angleZ = gyro_angle_z;
+  gyro_angle_x = angleX;
+  gyro_angle_y = angleY;
+  gyro_angle_z = angleZ;
+  rel_angleX = init_angleX - angleX;
+  rel_angleY = -(init_angleY - angleY);
+  rel_angleZ = init_angleZ - angleZ;
+}
+
+void writeMPU6050(byte reg, byte data)
+{
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(reg);
+  Wire.write(data);
+  Wire.endTransmission();
+}
+
+void AcceleroMeterAngleSetup()
+{
+  AcceleroMeterAddressSetup();
+  AcceleroMeterWireRead();
+  writeMPU6050(MPU6050_SMPLRT_DIV, 0x00);
+  writeMPU6050(MPU6050_CONFIG, 0x00);
+  writeMPU6050(MPU6050_GYRO_CONFIG, 0x08);
+  writeMPU6050(MPU6050_ACCEL_CONFIG, 0x00);
+  writeMPU6050(MPU6050_PWR_MGMT_1, 0x01);
+  Serial.print("Calculate Calibration");
+  for (int i = 0; i < 3000; i++)
+  {
+    AcceleroMeterWireRead();
+    dpsX = ((float)raw_gyro_x) / 65.5;
+    dpsY = ((float)raw_gyro_y) / 65.5;
+    dpsZ = ((float)raw_gyro_z) / 65.5;
+    offsetX += dpsX;
+    offsetY += dpsY;
+    offsetZ += dpsZ;
+    if (i % 1000 == 0)
+    {
+      Serial.print(".");
+    }
+  }
+  Serial.println();
+  offsetX /= 3000;
+  offsetY /= 3000;
+  offsetZ /= 3000;
+  Serial.print("Calculate Rotation");
+  for (int i = 0; i < 1000; i++)
+  {
+    calcRotation();
+    if (i % 1000 == 0)
+    {
+      Serial.print(".");
+    }
+  }
+  Serial.println();
+  init_angleX = angleX;
+  init_angleY = angleY;
+  init_angleZ = angleZ;
+}
 
 void setup()
 {
@@ -303,6 +442,8 @@ void setup()
   attachInterrupt(PPM_PIN, ppmInterrupt, RISING); // 割り込みを設定
   Serial.println("PPM Receiver Initialized");
 
+  calibrateESCs();
+
   // MPU6050初期化
   Wire.begin();
   mpu.initialize();
@@ -313,37 +454,31 @@ void setup()
       ;
   }
   Serial.println("MPU6050接続成功！");
+  AcceleroMeterAngleSetup();
 
   // Madgwickフィルタの初期化
   MadgwickFilter.begin(50);
-  // PWM出力の初期化（ledcAttachPinを使用）
-  ledcSetup(0, pwmFrequency, pwmResolution);
-  ledcAttachPin(m1Pin, 0);
 
-  ledcSetup(1, pwmFrequency, pwmResolution);
-  ledcAttachPin(m2Pin, 1);
-
-  ledcSetup(2, pwmFrequency, pwmResolution);
-  ledcAttachPin(m3Pin, 2);
-
-  ledcSetup(3, pwmFrequency, pwmResolution);
-  ledcAttachPin(m4Pin, 3);
+  // 各モーターをピンにアタッチ
+  ESC1.attach(m1Pin);
+  ESC2.attach(m2Pin);
+  ESC3.attach(m3Pin);
+  ESC4.attach(m4Pin);
 
   Serial.println("PWM successfully attached to all motors");
-
-  calibrateESCs();
 
   // 全てのモーターを最小値で初期化
   setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min);
   delay(2000); // 安定のための遅延
   currentStatus = Flash;
+  setLedPattern(currentStatus);
 }
 
 void loop()
 {
 
   // 現在のステータスに応じてLEDパターンを変更
-  setLedPattern(currentStatus);
+  // setLedPattern(currentStatus);
   currentMillis = millis();
 
   if (currentMillis - previousMillis > 0)
@@ -352,7 +487,7 @@ void loop()
     frameRate = 1000.0 / (currentMillis - previousMillis);
 
     // Print the frame rate to the serial monitor
-    //Serial.println(frameRate);
+    // Serial.println(frameRate);
 
     // Update previousMillis for the next loop
     previousMillis = currentMillis;
@@ -363,21 +498,21 @@ void loop()
 
 void loopDrone()
 {
-  showRecievedData();
-  getIMUdata();                                           // Pulls raw gyro andaccelerometer data from IMU and applies LP filters to remove noise
-  Madgwick6DOF(GyroX, -GyroY, -GyroZ, -AccX, AccY, AccZ); // Updates roll_IMU, pitch_IMU, and yaw_IMU angle estimates (degrees)
-  getDesiredAnglesAndThrottle();                          // Convert raw commands to normalized values based on saturated control limits
-  PIDControlCalcs();                                      // The PID functions. Stabilize on angle setpoint from getDesiredAnglesAndThrottle
-  controlMixer();                                         // Mixes PID outputs to scaled actuator commands -- custom mixing assignments done here
-  scaleCommands();                                        // Scales motor commands to 0-1
-  commandMotors();                                        // Sends command pulses to each ESC pin to drive the motors
-  getRadioSticks();                                       // Gets the PWM from the radio receiver
+  // showRecievedData();
+  getIMUdata();                                                                      // Pulls raw gyro andaccelerometer data from IMU and applies LP filters to remove noise
+  Madgwick6DOF(gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick, AccX, AccY, AccZ); // Updates roll_IMU, pitch_IMU, and yaw_IMU angle estimates (degrees)
+  getDesiredAnglesAndThrottle();                                                     // Convert raw commands to normalized values based on saturated control limits
+  PIDControlCalcs();                                                                 // The PID functions. Stabilize on angle setpoint from getDesiredAnglesAndThrottle
+  controlMixer();                                                                    // Mixes PID outputs to scaled actuator commands -- custom mixing assignments done here
+  scaleCommands();                                                                   // Scales motor commands to 0-1
+  commandMotors();                                                                   // Sends command pulses to each ESC pin to drive the motors
+  getRadioSticks();                                                                  // Gets the PWM from the radio receiver
 
-  //printAcc();
-  //printGyro();
+  // printAcc();
+  // printGyro();
   //printRollPitchYaw();
-  //printPIDoutput();
-  //printMotorCommands();
+  //  printPIDoutput();
+    printMotorCommands();
 }
 
 // チャネル値を取得するヘルパー関数
@@ -412,38 +547,78 @@ void showRecievedData()
 
 void getIMUdata()
 {
-  // DESCRIPTION: Request full dataset from MPU6050
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU6050_ADDR, 14, true);
+  raw_acc_x = Wire.read() << 8 | Wire.read();
+  raw_acc_y = Wire.read() << 8 | Wire.read();
+  raw_acc_z = Wire.read() << 8 | Wire.read();
+  raw_t = Wire.read() << 8 | Wire.read();
+  raw_gyro_x = Wire.read() << 8 | Wire.read();
+  raw_gyro_y = Wire.read() << 8 | Wire.read();
+  raw_gyro_z = Wire.read() << 8 | Wire.read();
 
-  int16_t ax, ay, az, gx, gy, gz;
+  AccX = ((float)raw_acc_x) / 16384.0;
+  AccY = ((float)raw_acc_y) / 16384.0;
+  AccZ = ((float)raw_acc_z) / 16384.0;
 
-  // MPU6050からデータを取得
-  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  acc_angle_y = atan2(AccX, AccZ + abs(AccY)) * 360 / -2.0 / PI;
+  acc_angle_x = atan2(AccY, AccZ + abs(AccX)) * 360 / 2.0 / PI;
+  dpsX = ((float)raw_gyro_x) / 65.5;
+  dpsY = ((float)raw_gyro_y) / 65.5;
+  dpsZ = ((float)raw_gyro_z) / 65.5;
+  interval = millis() - preInterval;
+  preInterval = millis();
+  gyro_angle_x += (dpsX - offsetX) * (interval * 0.001);
+  gyro_angle_y += (dpsY - offsetY) * (interval * 0.001);
+  gyro_angle_z += (dpsZ - offsetZ) * (interval * 0.001);
+  angleX = (0.996 * gyro_angle_x) + (0.004 * acc_angle_x);
+  angleY = (0.996 * gyro_angle_y) + (0.004 * acc_angle_y);
+  angleZ = gyro_angle_z;
+  gyro_angle_x = angleX;
+  gyro_angle_y = angleY;
+  gyro_angle_z = angleZ;
+  GyroX = init_angleX - angleX;
+  GyroY = -(init_angleY - angleY);
+  GyroZ = init_angleZ - angleZ;
 
-  // 加速度データをgに変換し、誤差を補正
-  AccX = (ax / 16384.0) - AccErrorX;
-  AccY = (ay / 16384.0) - AccErrorY;
-  AccZ = (az / 16384.0) - AccErrorZ;
+  // ジャイロデータをラジアン毎秒に変換
+  gx_for_Madgwick = dpsX * DEG_TO_RAD;
+  gy_for_Madgwick = dpsY * DEG_TO_RAD;
+  gz_for_Madgwick = dpsZ * DEG_TO_RAD;
 
-  // ジャイロデータを°/sに変換し、誤差を補正
-  GyroX = (gx / 131.0) - GyroErrorX;
-  GyroY = (gy / 131.0) - GyroErrorY;
-  GyroZ = (gz / 131.0) - GyroErrorZ;
+  // 加速度データの正規化
+  float norm = sqrt(AccX * AccX + AccY * AccY + AccZ * AccZ);
+  if (norm != 0)
+  {
+    AccX /= norm;
+    AccY /= norm;
+    AccZ /= norm;
+  }
 }
 
 void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az)
 {
   MadgwickFilter.updateIMU(gx, gy, gz, ax, ay, az);
-  roll_IMU = MadgwickFilter.getRoll() - RollError;
-  pitch_IMU = -MadgwickFilter.getPitch() - PitchError;
-  yaw_IMU = MadgwickFilter.getYaw();
+  // roll_IMU = MadgwickFilter.getRoll() - RollError;
+  // pitch_IMU = -MadgwickFilter.getPitch() - PitchError;
+
+  roll_IMU = -MadgwickFilter.getRoll();
+  pitch_IMU = MadgwickFilter.getPitch();
+  yaw_IMU = GyroZ;
 }
 
 void getDesiredAnglesAndThrottle()
 {
   thro_des = (PWM_throttle - 1000.0) / 1000.0;  // Between 0 and 1
-  roll_des = (PWM_roll - 1482.0) / 500.0;       // Between -1 and 1
-  pitch_des = (PWM_Elevation - 1487.0) / 500.0; // Between -1 and 1
-  yaw_des = (PWM_Rudd - 1485.0) / 500.0;        // Between -1 and 1
+  roll_des = (PWM_roll - 1500.0) / 500.0;       // Between -1 and 1
+  pitch_des = -((PWM_Elevation - 1500.0) / 500.0); // Between -1 and 1
+  yaw_des = (PWM_Rudd - 1500.0) / 500.0;        // Between -1 and 1
 
   // Constrain within normalized bounds
   thro_des = constrain(thro_des, 0.0, 1.0) * 0.6;         // Between 0 and 1
@@ -557,37 +732,55 @@ void getRadioSticks()
 
 void commandMotors()
 {
-  m1_command_PWM += 1040;
-  m2_command_PWM += 980;
-  m3_command_PWM += 980;
-  m4_command_PWM += 910;
+  // ベーススロットル値を追加
+  m1_command_PWM += throttle_min;
+  m2_command_PWM += throttle_min;
+  m3_command_PWM += throttle_min;
+  m4_command_PWM += throttle_min;
 
+  // 各モーターのバッファ値を追加
+  m1_command_PWM += morter1_buffer;
+  m2_command_PWM += morter2_buffer;
+  m3_command_PWM += morter3_buffer;
+  m4_command_PWM += morter4_buffer;
+
+  // PWM値を範囲内に制限
+  m1_command_PWM = constrain(m1_command_PWM, throttle_min, throttle_max);
+  m2_command_PWM = constrain(m2_command_PWM, throttle_min, throttle_max);
+  m3_command_PWM = constrain(m3_command_PWM, throttle_min, throttle_max);
+  m4_command_PWM = constrain(m4_command_PWM, throttle_min, throttle_max);
+
+  // モーターにPWMを設定
   setMotorPWM(m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM);
 }
+
 void calibrateESCs()
 {
+  Serial.println("キャリブレーションを開始します");
   // ESCキャリブレーション用に全てのモーターを最大スロットルに設定
   setMotorPWM(throttle_max, throttle_max, throttle_max, throttle_max);
-  delay(2000);
+  Serial.println("最大値入力中");
+  delay(3000);
 
   // ESCキャリブレーション用に全てのモーターを最小スロットルに設定
   setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min);
-  delay(2000);
+  Serial.println("最小値入力中");
+  delay(4000);
 }
 
 // モーターPWM信号を設定する関数
 void setMotorPWM(int m1, int m2, int m3, int m4)
 {
-  int duty1 = map(m1, 1000, 2000, 0, 65535);
-  int duty2 = map(m2, 1000, 2000, 0, 65535);
-  int duty3 = map(m3, 1000, 2000, 0, 65535);
-  int duty4 = map(m4, 1000, 2000, 0, 65535);
+  int duty1 = map(m1, throttle_min, throttle_max, throttle_min, throttle_max);
+  int duty2 = map(m2, throttle_min, throttle_max, throttle_min, throttle_max);
+  int duty3 = map(m3, throttle_min, throttle_max, throttle_min, throttle_max);
+  int duty4 = map(m4, throttle_min, throttle_max, throttle_min, throttle_max);
 
   // 修正: PWMチャネル (0～3) を指定
-  ledcWrite(0, duty1);
-  ledcWrite(1, duty2);
-  ledcWrite(2, duty3);
-  ledcWrite(3, duty4);
+  ESC1.writeMicroseconds(duty1);
+  ESC2.writeMicroseconds(duty2);
+  ESC3.writeMicroseconds(duty3);
+  ESC4.writeMicroseconds(duty4);
 }
 
 void printRollPitchYaw()
@@ -624,16 +817,20 @@ void printMotorCommands()
 {
   Serial.print(F("m1_command: "));
   Serial.print(m1_command_PWM);
-  // Serial.print(m1_command_scaled);
+  Serial.print(F("  : "));
+  Serial.print(m1_command_scaled);
   Serial.print(F(" m2_command: "));
   Serial.print(m2_command_PWM);
-  // Serial.print(m2_command_scaled);
+  Serial.print(F("  : "));
+  Serial.print(m2_command_scaled);
   Serial.print(F(" m3_command: "));
   Serial.print(m3_command_PWM);
-  // Serial.print(m3_command_scaled);
+  Serial.print(F("  : "));
+  Serial.print(m3_command_scaled);
   Serial.print(F(" m4_command: "));
   Serial.println(m4_command_PWM);
-  // Serial.print(m4_command_scaled);
+  Serial.print(F("  : "));
+  Serial.print(m4_command_scaled);
 }
 
 void printPIDoutput()
