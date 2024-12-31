@@ -53,10 +53,10 @@ const int pwmResolution = 16; // 16ビット解像度
 const int throttle_max = 2000; // 最大PWM
 const int throttle_min = 1000; // 最小PWM
 
-const int morter1_buffer = 0;
-const int morter2_buffer = 280;
-const int morter3_buffer = 150;
-const int morter4_buffer = 0;
+const int morter1_buffer = -10; // RL
+const int morter2_buffer = 290; // RR
+const int morter3_buffer = 150; // FR
+const int morter4_buffer = 0;   // FL
 
 // madgwick
 float B_madgwick = 0.04; //(default 0.04)
@@ -69,7 +69,7 @@ float q3 = 0.0f;
 float i_limit = 20;    // Integrator saturation level, mostly for safety (default 25.0)
 float maxRoll = 18.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
 float maxPitch = 18.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxYaw = 10.0;   // Max yaw rate in deg/sec (default 160.0)
+float maxYaw = 30.0;   // Max yaw rate in deg/sec (default 160.0)
 float maxMotor = 0.8;
 float Kp_range = 20;
 float Kd_range = 5;
@@ -84,9 +84,9 @@ float Kp_pitch_angle = 6.06 * parameter_rate; // Pitch P-gain
 float Ki_pitch_angle = 0.00 * parameter_rate; // Pitch I-gain
 float Kd_pitch_angle = 0.83 * parameter_rate; // Pitch D-gain
 
-float Kp_yaw = 0; // Yaw P-gain default 30
-float Ki_yaw = 0; // Yaw I-gain default 5
-float Kd_yaw = 0; // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)
+float Kp_yaw = 30;   // Yaw P-gain default 30
+float Ki_yaw = .5;    // Yaw I-gain default 5
+float Kd_yaw = .015; // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)
 
 float stick_dampener = 0.3;
 
@@ -108,29 +108,22 @@ float GyroX_prev, GyroY_prev, GyroZ_prev;
 float roll_IMU, pitch_IMU, yaw_IMU;
 float roll_IMU_prev, pitch_IMU_prev;
 
-float AccErrorX = 0.03;
-float AccErrorY = 0.02;
-float AccErrorZ = 0.01;
-float GyroErrorX = 0.9;
-float GyroErrorY = -0.40;
-float GyroErrorZ = 0.0;
-
-float RollError = -8.0;
-float PitchError = 4.0;
-
-float rollPIDError = -0.02;
+float rollPIDError = -0.00;
 float pitchPIDError = 0.00;
+
+float roll_Weight = 0.0001, pitch_Weight = 0.0001, yaw_Weight = 0.00001;
+float PID_Limit = 0.10;
 
 int MPU6050_ADDR = 0x68;
 int16_t raw_acc_x, raw_acc_y, raw_acc_z, raw_t, raw_gyro_x, raw_gyro_y, raw_gyro_z;
-float acc_x, acc_y, acc_z, acc_angle_x, acc_angle_y;
+float acc_angle_x, acc_angle_y;
 double gyro_angle_x = 0, gyro_angle_y = 0, gyro_angle_z = 0;
 float interval, preInterval;
 double offsetX = 0, offsetY = 0, offsetZ = 0;
 float angleX, angleY, angleZ;
 float dpsX, dpsY, dpsZ;
 double init_angleX = 0, init_angleY = 0, init_angleZ = 0;
-volatile float rel_angleX, rel_angleY, rel_angleZ;
+double init_AccX = 0, init_AccY = 0, init_AccZ = 0, init_dpsX = 0, init_dpsY = 0, init_dpsZ = 0;
 float gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick;
 
 #define MPU6050_SMPLRT_DIV 0x19
@@ -179,9 +172,10 @@ void printGyro();
 void printRollPitchYaw();
 void printPIDoutput();
 void printMotorCommands();
+void printDes();
+void printYawPID();
+void printRollPID();
 
-// Read the number of a given channel and convert to the range provided.
-// If the channel is off, return the default value
 int readChannel(int channelInput, int minLimit, int maxLimit, int defaultValue)
 {
   int ch = pulseIn(channelInput, HIGH, 30000);
@@ -190,7 +184,6 @@ int readChannel(int channelInput, int minLimit, int maxLimit, int defaultValue)
   return map(ch, 1000, 2000, minLimit, maxLimit);
 }
 
-// Red the channel and return a boolean value
 bool redSwitch(byte channelInput, bool defaultValue)
 {
   int intDefaultValue = (defaultValue) ? 100 : 0;
@@ -351,14 +344,14 @@ void AcceleroMeterWireRead()
 
 void calcRotation()
 {
-  acc_x = ((float)raw_acc_x) / 16384.0;
-  acc_y = ((float)raw_acc_y) / 16384.0;
-  acc_z = ((float)raw_acc_z) / 16384.0;
-  acc_angle_y = atan2(acc_x, acc_z + abs(acc_y)) * 360 / -2.0 / PI;
-  acc_angle_x = atan2(acc_y, acc_z + abs(acc_x)) * 360 / 2.0 / PI;
-  dpsX = ((float)raw_gyro_x) / 65.5;
-  dpsY = ((float)raw_gyro_y) / 65.5;
-  dpsZ = ((float)raw_gyro_z) / 65.5;
+  AccX = (((float)raw_acc_x) / 16384.0) ;
+  AccY = (((float)raw_acc_y) / 16384.0) ;
+  AccZ = (((float)raw_acc_z) / 16384.0);
+  acc_angle_y = atan2(AccX, AccZ + abs(AccY)) * 360 / -2.0 / PI;
+  acc_angle_x = atan2(AccY, AccZ + abs(AccX)) * 360 / 2.0 / PI;
+  dpsX = (((float)raw_gyro_x) / 65.5) ;
+  dpsY = (((float)raw_gyro_y) / 65.5) ;
+  dpsZ = (((float)raw_gyro_z) / 65.5) ;
   interval = millis() - preInterval;
   preInterval = millis();
   gyro_angle_x += (dpsX - offsetX) * (interval * 0.001);
@@ -370,9 +363,34 @@ void calcRotation()
   gyro_angle_x = angleX;
   gyro_angle_y = angleY;
   gyro_angle_z = angleZ;
-  rel_angleX = init_angleX - angleX;
-  rel_angleY = -(init_angleY - angleY);
-  rel_angleZ = init_angleZ - angleZ;
+  GyroX = init_angleX - angleX;
+  GyroY = -(init_angleY - angleY);
+  GyroZ = init_angleZ - angleZ;
+}
+
+void ShowGyro()
+{
+
+  Serial.print("init_angleX: ");
+  Serial.print(init_angleX);
+  Serial.print("angleX: ");
+  Serial.print(angleX);
+  Serial.print("GyroX: ");
+  Serial.print(GyroX);
+
+  Serial.print("| init_angleY: ");
+  Serial.print(init_angleY);
+  Serial.print("angleY: ");
+  Serial.print(angleY);
+  Serial.print("GyroY: ");
+  Serial.print(GyroY);
+
+  Serial.print("| init_angleZ: ");
+  Serial.print(init_angleZ);
+  Serial.print("angleZ: ");
+  Serial.print(angleZ);
+  Serial.print("GyroZ: ");
+  Serial.println(GyroZ);
 }
 
 void writeMPU6050(byte reg, byte data)
@@ -392,8 +410,9 @@ void AcceleroMeterAngleSetup()
   writeMPU6050(MPU6050_GYRO_CONFIG, 0x08);
   writeMPU6050(MPU6050_ACCEL_CONFIG, 0x00);
   writeMPU6050(MPU6050_PWR_MGMT_1, 0x01);
-  Serial.print("Calculate Calibration");
-  for (int i = 0; i < 3000; i++)
+
+  Serial.print("Calculating Calibration");
+  for (int i = 0; i < 1200; i++)
   {
     AcceleroMeterWireRead();
     dpsX = ((float)raw_gyro_x) / 65.5;
@@ -402,28 +421,110 @@ void AcceleroMeterAngleSetup()
     offsetX += dpsX;
     offsetY += dpsY;
     offsetZ += dpsZ;
-    if (i % 1000 == 0)
+
+    if (i % 400 == 0)
     {
       Serial.print(".");
     }
   }
   Serial.println();
-  offsetX /= 3000;
-  offsetY /= 3000;
-  offsetZ /= 3000;
-  Serial.print("Calculate Rotation");
-  for (int i = 0; i < 1000; i++)
+  offsetX /= 1200;
+  offsetY /= 1200;
+  offsetZ /= 1200;
+
+  Serial.println("Calibration complete:");
+  Serial.print("Offset X: ");
+  Serial.print(offsetX);
+  Serial.print("| Offset Y: ");
+  Serial.print(offsetY);
+  Serial.print("| Offset Z: ");
+  Serial.println(offsetZ);
+  Serial.println();
+
+  Serial.print("Calculating Rotation");
+
+  float sum_angleX = 0;
+  float sum_angleY = 0;
+  float sum_angleZ = 0;
+
+  for (int i = 0; i < 1200; i++)
   {
     calcRotation();
-    if (i % 1000 == 0)
+
+    // 角度の累積
+    sum_angleX += angleX;
+    sum_angleY += angleY;
+    sum_angleZ += angleZ;
+
+    // プログレスを表示
+    if (i % 400 == 0)
     {
       Serial.print(".");
     }
   }
   Serial.println();
-  init_angleX = angleX;
-  init_angleY = angleY;
-  init_angleZ = angleZ;
+
+  init_angleX = sum_angleX / 1200;
+  init_angleY = sum_angleY / 1200;
+  init_angleZ = sum_angleZ / 1200;
+
+  Serial.println("Initial angles:");
+  Serial.print("Initial Angle X: ");
+  Serial.print(init_angleX);
+  Serial.print("| Initial Angle Y: ");
+  Serial.print(init_angleY);
+  Serial.print("| Initial Angle Z: ");
+  Serial.println(init_angleZ);
+  Serial.println();
+
+  float sum_AccX = 0;
+  float sum_AccY = 0;
+  float sum_AccZ = 0;
+  float sum_dpsX = 0;
+  float sum_dpsY = 0;
+  float sum_dpsZ = 0;
+
+  Serial.print("Calculating Acceleration");
+  for (int i = 0; i < 1200; i++)
+  {
+    calcRotation();
+
+    sum_AccX += AccX;
+    sum_AccY += AccY;
+    sum_AccZ += AccZ;
+    sum_dpsX += dpsX;
+    sum_dpsY += dpsY;
+    sum_dpsZ += dpsZ;
+
+    if (i % 400 == 0)
+    {
+      Serial.print(".");
+    }
+  }
+  Serial.println();
+
+  init_AccX = sum_AccX / 1200;
+  init_AccY = sum_AccY / 1200;
+  init_AccZ = sum_AccZ / 1200;
+
+  init_dpsX = sum_dpsX / 1200;
+  init_dpsY = sum_dpsY / 1200;
+  init_dpsZ = sum_dpsZ / 1200;
+
+  Serial.println("Initial acc");
+  Serial.print("Initial AccX: ");
+  Serial.print(init_AccX);
+  Serial.print("| Initial AccY : ");
+  Serial.print(init_AccY);
+  Serial.print("| Initial AccZ: ");
+  Serial.print(init_AccZ);
+  Serial.print("| Initial dpsX: ");
+  Serial.print(init_dpsX);
+  Serial.print("| Initial dpsY: ");
+  Serial.print(init_dpsY);
+  Serial.print("| Initial dosZ: ");
+  Serial.print(init_dpsZ);
+  Serial.println();
 }
 
 void setup()
@@ -441,8 +542,6 @@ void setup()
   pinMode(PPM_PIN, INPUT_PULLUP);                 // ピンを入力モードに設定
   attachInterrupt(PPM_PIN, ppmInterrupt, RISING); // 割り込みを設定
   Serial.println("PPM Receiver Initialized");
-
-  calibrateESCs();
 
   // MPU6050初期化
   Wire.begin();
@@ -467,11 +566,7 @@ void setup()
 
   Serial.println("PWM successfully attached to all motors");
 
-  // 全てのモーターを最小値で初期化
-  setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min);
-  delay(2000); // 安定のための遅延
-  currentStatus = Flash;
-  setLedPattern(currentStatus);
+  calibrateESCs();
 }
 
 void loop()
@@ -508,14 +603,17 @@ void loopDrone()
   commandMotors();                                                                   // Sends command pulses to each ESC pin to drive the motors
   getRadioSticks();                                                                  // Gets the PWM from the radio receiver
 
-  // printAcc();
+   //printAcc();
   // printGyro();
-  //printRollPitchYaw();
-  //  printPIDoutput();
-    printMotorCommands();
+ //printRollPitchYaw();
+  printPIDoutput();
+  //printYawPID();
+  //printRollPID();
+  //  printDes();
+  //   printMotorCommands();
+  //   ShowGyro();
 }
 
-// チャネル値を取得するヘルパー関数
 int getChannelValue(int channelIndex)
 {
   if (channelIndex >= 0 && channelIndex < CHANNELS)
@@ -547,45 +645,8 @@ void showRecievedData()
 
 void getIMUdata()
 {
-  Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x6B);
-  Wire.write(0);
-  Wire.endTransmission(true);
-  Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x3B);
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU6050_ADDR, 14, true);
-  raw_acc_x = Wire.read() << 8 | Wire.read();
-  raw_acc_y = Wire.read() << 8 | Wire.read();
-  raw_acc_z = Wire.read() << 8 | Wire.read();
-  raw_t = Wire.read() << 8 | Wire.read();
-  raw_gyro_x = Wire.read() << 8 | Wire.read();
-  raw_gyro_y = Wire.read() << 8 | Wire.read();
-  raw_gyro_z = Wire.read() << 8 | Wire.read();
-
-  AccX = ((float)raw_acc_x) / 16384.0;
-  AccY = ((float)raw_acc_y) / 16384.0;
-  AccZ = ((float)raw_acc_z) / 16384.0;
-
-  acc_angle_y = atan2(AccX, AccZ + abs(AccY)) * 360 / -2.0 / PI;
-  acc_angle_x = atan2(AccY, AccZ + abs(AccX)) * 360 / 2.0 / PI;
-  dpsX = ((float)raw_gyro_x) / 65.5;
-  dpsY = ((float)raw_gyro_y) / 65.5;
-  dpsZ = ((float)raw_gyro_z) / 65.5;
-  interval = millis() - preInterval;
-  preInterval = millis();
-  gyro_angle_x += (dpsX - offsetX) * (interval * 0.001);
-  gyro_angle_y += (dpsY - offsetY) * (interval * 0.001);
-  gyro_angle_z += (dpsZ - offsetZ) * (interval * 0.001);
-  angleX = (0.996 * gyro_angle_x) + (0.004 * acc_angle_x);
-  angleY = (0.996 * gyro_angle_y) + (0.004 * acc_angle_y);
-  angleZ = gyro_angle_z;
-  gyro_angle_x = angleX;
-  gyro_angle_y = angleY;
-  gyro_angle_z = angleZ;
-  GyroX = init_angleX - angleX;
-  GyroY = -(init_angleY - angleY);
-  GyroZ = init_angleZ - angleZ;
+  AcceleroMeterWireRead();
+  calcRotation();
 
   // ジャイロデータをラジアン毎秒に変換
   gx_for_Madgwick = dpsX * DEG_TO_RAD;
@@ -605,20 +666,18 @@ void getIMUdata()
 void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az)
 {
   MadgwickFilter.updateIMU(gx, gy, gz, ax, ay, az);
-  // roll_IMU = MadgwickFilter.getRoll() - RollError;
-  // pitch_IMU = -MadgwickFilter.getPitch() - PitchError;
 
-  roll_IMU = -MadgwickFilter.getRoll();
-  pitch_IMU = MadgwickFilter.getPitch();
+  roll_IMU = -(MadgwickFilter.getRoll() - init_angleX);
+  pitch_IMU = MadgwickFilter.getPitch() - init_angleY;
   yaw_IMU = GyroZ;
 }
 
 void getDesiredAnglesAndThrottle()
 {
-  thro_des = (PWM_throttle - 1000.0) / 1000.0;  // Between 0 and 1
-  roll_des = (PWM_roll - 1500.0) / 500.0;       // Between -1 and 1
+  thro_des = (PWM_throttle - 1000.0) / 1000.0;     // Between 0 and 1
+  roll_des = (PWM_roll - 1500.0) / 500.0;          // Between -1 and 1
   pitch_des = -((PWM_Elevation - 1500.0) / 500.0); // Between -1 and 1
-  yaw_des = (PWM_Rudd - 1500.0) / 500.0;        // Between -1 and 1
+  yaw_des = (PWM_Rudd - 1500.0) / 500.0;           // Between -1 and 1
 
   // Constrain within normalized bounds
   thro_des = constrain(thro_des, 0.0, 1.0) * 0.6;         // Between 0 and 1
@@ -644,25 +703,27 @@ void PIDControlCalcs()
   // Roll
   error_roll = roll_des - roll_IMU;
   integral_roll = integral_roll_prev + error_roll * deltaTime;
-  integral_roll = constrain(integral_roll, -i_limit, i_limit);                                                        // Limit integrator to prevent saturating
-  derivative_roll = GyroX;                                                                                            //(roll_des-roll_IMU-roll_des-previous_IMU)/dt=current angular velocity since last IMU read and therefore GyroX in deg/s
-  roll_PID = 0.0001 * (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll - Kd_roll_angle * derivative_roll); // Scaled by .0001 to bring within -1 to 1 range
+  integral_roll = constrain(integral_roll, -i_limit, i_limit); // Limit integrator to prevent saturating
+  derivative_roll = GyroX;                                     //(roll_des-roll_IMU-roll_des-previous_IMU)/dt=current angular velocity since last IMU read and therefore GyroX in deg/s
+  roll_PID = roll_Weight * (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll - Kd_roll_angle * derivative_roll);
   roll_PID -= rollPIDError;
-
+  roll_PID = constrain(roll_PID, -PID_Limit, PID_Limit);
   // Pitch
   error_pitch = pitch_des - pitch_IMU;
   integral_pitch = integral_pitch_prev + error_pitch * deltaTime;
   integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
   derivative_pitch = GyroY;
-  pitch_PID = .0001 * (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch - Kd_pitch_angle * derivative_pitch); // Scaled by .0001 to bring within -1 to 1 range
+  pitch_PID = pitch_Weight * (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch - Kd_pitch_angle * derivative_pitch);
   pitch_PID -= pitchPIDError;
+  pitch_PID = constrain(pitch_PID, -PID_Limit, PID_Limit);
 
-  // Yaw, stablize on rate from GyroZ versus angle.  In other words, your stick is setting y axis rotation speed - not the angle to get to.
-  error_yaw = yaw_des - GyroZ;
+  // Yaw
+  error_yaw = yaw_des - dpsZ;
   integral_yaw = integral_yaw_prev + error_yaw * deltaTime;
   integral_yaw = constrain(integral_yaw, -i_limit, i_limit);
   derivative_yaw = (error_yaw - error_yaw_prev) / deltaTime;
-  yaw_PID = .0001 * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw); // Scaled by .0001 to bring within -1 to 1 range
+  yaw_PID = yaw_Weight * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw);
+  yaw_PID = constrain(yaw_PID, -PID_Limit, PID_Limit);
 
   // Update roll variables
   integral_roll_prev = integral_roll;
@@ -756,16 +817,15 @@ void commandMotors()
 
 void calibrateESCs()
 {
-  Serial.println("キャリブレーションを開始します");
-  // ESCキャリブレーション用に全てのモーターを最大スロットルに設定
-  setMotorPWM(throttle_max, throttle_max, throttle_max, throttle_max);
-  Serial.println("最大値入力中");
-  delay(3000);
+  Serial.println("Starting calibration");
 
-  // ESCキャリブレーション用に全てのモーターを最小スロットルに設定
   setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min);
-  Serial.println("最小値入力中");
-  delay(4000);
+  Serial.println("Setting maximum throttle");
+  delay(2000);
+  currentStatus = Flash;
+  setLedPattern(currentStatus);
+  Serial.println("Setting minimum throttle");
+  delay(2000);
 }
 
 // モーターPWM信号を設定する関数
@@ -793,13 +853,31 @@ void printRollPitchYaw()
   Serial.println(yaw_IMU);
 }
 
+void printDes()
+{
+  Serial.print(F("  roll_des: "));
+  Serial.print(roll_des);
+  Serial.print(F("| pitch_des: "));
+  Serial.print(pitch_des);
+  Serial.print(F("| yaw_des: "));
+  Serial.println(yaw_des);
+}
+
 void printAcc()
 {
   Serial.print(F(" AccX: "));
+  if (AccX >= 0)
+    Serial.print("+"); // 正なら "+" を付ける
   Serial.print(AccX);
+
   Serial.print(F(" AccY: "));
+  if (AccY >= 0)
+    Serial.print("+");
   Serial.print(AccY);
+
   Serial.print(F(" AccZ: "));
+  if (AccZ >= 0)
+    Serial.print("+");
   Serial.println(AccZ);
 }
 
@@ -836,10 +914,18 @@ void printMotorCommands()
 void printPIDoutput()
 {
   Serial.print(F("roll_PID: "));
+  if (roll_PID >= 0)
+    Serial.print("+"); // 正の値に "+" を付ける
   Serial.print(roll_PID);
+
   Serial.print(F(" pitch_PID: "));
+  if (pitch_PID >= 0)
+    Serial.print("+");
   Serial.print(pitch_PID);
+
   Serial.print(F(" yaw_PID: "));
+  if (yaw_PID >= 0)
+    Serial.print("+");
   Serial.println(yaw_PID);
 }
 
@@ -854,6 +940,73 @@ void printReceive()
   Serial.print(F(", \"PWM_Rudd\": "));
   Serial.print(PWM_Rudd_output);
 }
+
+void printYawPID()
+{
+  Serial.print("yaw_des: ");
+  if (yaw_des >= 0)
+    Serial.print("+");
+  Serial.print(yaw_des);
+
+  Serial.print(", dpsZ: ");
+  if (dpsZ >= 0)
+    Serial.print("+");
+  Serial.print(dpsZ);
+
+  Serial.print(", error_yaw: ");
+  if (error_yaw >= 0)
+    Serial.print("+");
+  Serial.print(error_yaw);
+
+  Serial.print(", integral_yaw: ");
+  if (integral_yaw >= 0)
+    Serial.print("+");
+  Serial.print(integral_yaw);
+
+  Serial.print(", derivative_yaw: ");
+  if (derivative_yaw >= 0)
+    Serial.print("+");
+  Serial.print(derivative_yaw);
+
+  Serial.print(", yaw_PID: ");
+  if (yaw_PID >= 0)
+    Serial.print("+");
+  Serial.println(yaw_PID);
+}
+
+void printRollPID()
+{
+  Serial.print("roll_des: ");
+  if (roll_des >= 0)
+    Serial.print("+");
+  Serial.print(roll_des);
+
+  Serial.print(", roll_IMU: ");
+  if (roll_IMU >= 0)
+    Serial.print("+");
+  Serial.print(roll_IMU);
+
+  Serial.print(", error_roll: ");
+  if (error_roll >= 0)
+    Serial.print("+");
+  Serial.print(error_roll);
+
+  Serial.print(", integral_roll: ");
+  if (integral_roll >= 0)
+    Serial.print("+");
+  Serial.print(integral_roll);
+
+  Serial.print(", derivative_roll: ");
+  if (derivative_roll >= 0)
+    Serial.print("+");
+  Serial.print(derivative_roll);
+
+  Serial.print(", roll_PID: ");
+  if (roll_PID >= 0)
+    Serial.print("+");
+  Serial.println(roll_PID);
+}
+
 
 float invSqrt(float x)
 {
