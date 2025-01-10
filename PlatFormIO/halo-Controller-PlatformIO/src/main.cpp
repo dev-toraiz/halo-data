@@ -4,6 +4,9 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <ESP32Servo.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <SPIFFS.h>
 
 // SDA（データライン）: GPIO21
 // SCL（クロックライン）: GPIO22
@@ -50,10 +53,10 @@ const int pwmResolution = 16; // 16ビット解像度
 const int throttle_max = 2000; // 最大PWM
 const int throttle_min = 1000; // 最小PWM
 
-const int morter1_buffer = 24;  // RL
-const int morter2_buffer = 290; // RR
-const int morter3_buffer = 130; // FR
-const int morter4_buffer = 24;  // FL
+int morter1_buffer = 24;  // RL
+int morter2_buffer = 290; // RR
+int morter3_buffer = 130; // FR
+int morter4_buffer = 24;  // FL
 
 // madgwick
 float B_madgwick = 0.04; //(default 0.04)
@@ -66,20 +69,20 @@ float q3 = 0.0f;
 float i_limit = 20;    // Integrator saturation level, mostly for safety (default 25.0)
 float maxRoll = 10.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
 float maxPitch = 10.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxYaw = 160.0;   // Max yaw rate in deg/sec (default 160.0)
+float maxYaw = 160.0;  // Max yaw rate in deg/sec (default 160.0)
 float maxMotor = 0.8;
 float Kp_range = 20;
 float Kd_range = 5;
 
 float parameter_rate = 1.0;
 
-float Kp_roll_angle = 2.5 * parameter_rate;    // Roll P-gain
-float Ki_roll_angle = 0.3 * parameter_rate; // Roll I-gain
-float Kd_roll_angle = 0.8 * parameter_rate;    // Roll D-gain
+float Kp_roll_angle = 2.4 * parameter_rate; // Roll P-gain
+float Ki_roll_angle = 0.1 * parameter_rate; // Roll I-gain
+float Kd_roll_angle = 0.9 * parameter_rate; // Roll D-gain
 
-float Kp_pitch_angle = 2.5 * parameter_rate;    // Pitch P-gain
-float Ki_pitch_angle = 0.3 * parameter_rate; // Pitch I-gain
-float Kd_pitch_angle = 0.8 * parameter_rate;    // Pitch D-gain
+float Kp_pitch_angle = 2.4 * parameter_rate; // Pitch P-gain
+float Ki_pitch_angle = 0.1 * parameter_rate; // Pitch I-gain
+float Kd_pitch_angle = 0.9 * parameter_rate; // Pitch D-gain
 
 float Kp_yaw = 10;   // Yaw P-gain default 30
 float Ki_yaw = .1;   // Yaw I-gain default 5
@@ -110,7 +113,7 @@ float pitchPIDError = 0.00;
 
 float roll_Weight = 0.001, pitch_Weight = 0.001, yaw_Weight = 0.0001;
 float PID_Limit = 0.10;
-float PID_Adjuster = 1.2;   // PID制御の影響力を反映
+float PID_Adjuster = 1.2;
 float min_rotation = 200; // ローターを回転させ続けるのに必要な最低限のスロットル
 float keep_rotating = false;
 
@@ -152,6 +155,125 @@ unsigned long PWM_throttle_output, PWM_roll_output, PWM_Elevation_output, PWM_Ru
 unsigned long volA, volB;
 
 int m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM;
+
+// 定数動的変更
+//  Wi-Fi設定
+const char *ssid = "IODATA-523c9c-2G";
+const char *password = "MKneN48553445";
+
+// サーバーのポート番号
+AsyncWebServer server(80);
+
+String processor(const String &var)
+{
+  if (var == "ROLL_WEIGHT")
+  {
+    return String(roll_Weight);
+  }
+  else if (var == "PITCH_WEIGHT")
+  {
+    return String(pitch_Weight);
+  }
+  else if (var == "YAW_WEIGHT")
+  {
+    return String(yaw_Weight);
+  }
+  else if (var == "PID_LIMIT")
+  {
+    return String(PID_Limit);
+  }
+  else if (var == "PID_ADJUSTER")
+  {
+    return String(PID_Adjuster);
+  }
+  else if (var == "MIN_ROTATION")
+  {
+    return String(min_rotation);
+  }
+  else if (var == "I_LIMIT")
+  {
+    return String(i_limit);
+  }
+  else if (var == "MAX_ROLL")
+  {
+    return String(maxRoll);
+  }
+  else if (var == "MAX_PITCH")
+  {
+    return String(maxPitch);
+  }
+  else if (var == "MAX_YAW")
+  {
+    return String(maxYaw);
+  }
+  else if (var == "MAX_MOTOR")
+  {
+    return String(maxMotor);
+  }
+  else if (var == "KP_RANGE")
+  {
+    return String(Kp_range);
+  }
+  else if (var == "KD_RANGE")
+  {
+    return String(Kd_range);
+  }
+  else if (var == "KP_ROLL_ANGLE")
+  {
+    return String(Kp_roll_angle);
+  }
+  else if (var == "KI_ROLL_ANGLE")
+  {
+    return String(Ki_roll_angle);
+  }
+  else if (var == "KD_ROLL_ANGLE")
+  {
+    return String(Kd_roll_angle);
+  }
+  else if (var == "KP_PITCH_ANGLE")
+  {
+    return String(Kp_pitch_angle);
+  }
+  else if (var == "KI_PITCH_ANGLE")
+  {
+    return String(Ki_pitch_angle);
+  }
+  else if (var == "KD_PITCH_ANGLE")
+  {
+    return String(Kd_pitch_angle);
+  }
+  else if (var == "KP_YAW")
+  {
+    return String(Kp_yaw);
+  }
+  else if (var == "KI_YAW")
+  {
+    return String(Ki_yaw);
+  }
+  else if (var == "KD_YAW")
+  {
+    return String(Kd_yaw);
+  }
+  else if (var == "MORTER1_BUFFER")
+  {
+    return String(morter1_buffer);
+  }
+  else if (var == "MORTER2_BUFFER")
+  {
+    return String(morter2_buffer);
+  }
+  else if (var == "MORTER3_BUFFER")
+  {
+    return String(morter3_buffer);
+  }
+  else if (var == "MORTER4_BUFFER")
+  {
+    return String(morter4_buffer);
+  }
+
+  // その他未定義のパラメータの場合は空文字を返す
+  return String();
+}
 
 // 関数を宣言
 //  プロトタイプ宣言（関数宣言）
@@ -371,15 +493,14 @@ void calcRotation()
 
 void ShowGyro()
 {
-  float sg_gx=dpsX- init_dpsX ;
-  float sg_gy=dpsY- init_dpsY ;
-  float sg_gz=dpsZ- init_dpsZ ;
+  float sg_gx = dpsX - init_dpsX;
+  float sg_gy = dpsY - init_dpsY;
+  float sg_gz = dpsZ - init_dpsZ;
   Serial.print("gx: ");
   Serial.print(sg_gx);
 
   Serial.print("gy: ");
   Serial.print(sg_gy);
-
 
   Serial.print("gz: ");
   Serial.println(sg_gz);
@@ -519,6 +640,99 @@ void AcceleroMeterAngleSetup()
   Serial.println();
 }
 
+// 現在の設定値をJSONで返す
+void getSettings(AsyncWebServerRequest *request)
+{
+    String response = "{";
+    response += "\"roll_Weight\":" + String(roll_Weight) + ",";
+    response += "\"pitch_Weight\":" + String(pitch_Weight) + ",";
+    response += "\"yaw_Weight\":" + String(yaw_Weight) + ",";
+    response += "\"PID_Limit\":" + String(PID_Limit) + ",";
+    response += "\"PID_Adjuster\":" + String(PID_Adjuster) + ",";
+    response += "\"min_rotation\":" + String(min_rotation) + ",";
+    response += "\"i_limit\":" + String(i_limit) + ",";
+    response += "\"maxRoll\":" + String(maxRoll) + ",";
+    response += "\"maxPitch\":" + String(maxPitch) + ",";
+    response += "\"maxYaw\":" + String(maxYaw) + ",";
+    response += "\"maxMotor\":" + String(maxMotor) + ",";
+    response += "\"Kp_range\":" + String(Kp_range) + ",";
+    response += "\"Kd_range\":" + String(Kd_range) + ",";
+    response += "\"Kp_roll_angle\":" + String(Kp_roll_angle) + ",";
+    response += "\"Ki_roll_angle\":" + String(Ki_roll_angle) + ",";
+    response += "\"Kd_roll_angle\":" + String(Kd_roll_angle) + ",";
+    response += "\"Kp_pitch_angle\":" + String(Kp_pitch_angle) + ",";
+    response += "\"Ki_pitch_angle\":" + String(Ki_pitch_angle) + ",";
+    response += "\"Kd_pitch_angle\":" + String(Kd_pitch_angle) + ",";
+    response += "\"Kp_yaw\":" + String(Kp_yaw) + ",";
+    response += "\"Ki_yaw\":" + String(Ki_yaw) + ",";
+    response += "\"Kd_yaw\":" + String(Kd_yaw) + ",";
+    response += "\"morter1_buffer\":" + String(morter1_buffer) + ",";
+    response += "\"morter2_buffer\":" + String(morter2_buffer) + ",";
+    response += "\"morter3_buffer\":" + String(morter3_buffer) + ",";
+    response += "\"morter4_buffer\":" + String(morter4_buffer);
+    response += "}";
+    request->send(200, "application/json", response);
+}
+
+// 設定値を更新
+void setSettings(AsyncWebServerRequest *request)
+{
+    if (request->hasParam("roll_Weight"))
+        roll_Weight = request->getParam("roll_Weight")->value().toFloat();
+    if (request->hasParam("pitch_Weight"))
+        pitch_Weight = request->getParam("pitch_Weight")->value().toFloat();
+    if (request->hasParam("yaw_Weight"))
+        yaw_Weight = request->getParam("yaw_Weight")->value().toFloat();
+    if (request->hasParam("PID_Limit"))
+        PID_Limit = request->getParam("PID_Limit")->value().toFloat();
+    if (request->hasParam("PID_Adjuster"))
+        PID_Adjuster = request->getParam("PID_Adjuster")->value().toFloat();
+    if (request->hasParam("min_rotation"))
+        min_rotation = request->getParam("min_rotation")->value().toFloat();
+    if (request->hasParam("i_limit"))
+        i_limit = request->getParam("i_limit")->value().toFloat();
+    if (request->hasParam("maxRoll"))
+        maxRoll = request->getParam("maxRoll")->value().toFloat();
+    if (request->hasParam("maxPitch"))
+        maxPitch = request->getParam("maxPitch")->value().toFloat();
+    if (request->hasParam("maxYaw"))
+        maxYaw = request->getParam("maxYaw")->value().toFloat();
+    if (request->hasParam("maxMotor"))
+        maxMotor = request->getParam("maxMotor")->value().toFloat();
+    if (request->hasParam("Kp_range"))
+        Kp_range = request->getParam("Kp_range")->value().toFloat();
+    if (request->hasParam("Kd_range"))
+        Kd_range = request->getParam("Kd_range")->value().toFloat();
+    if (request->hasParam("Kp_roll_angle"))
+        Kp_roll_angle = request->getParam("Kp_roll_angle")->value().toFloat();
+    if (request->hasParam("Ki_roll_angle"))
+        Ki_roll_angle = request->getParam("Ki_roll_angle")->value().toFloat();
+    if (request->hasParam("Kd_roll_angle"))
+        Kd_roll_angle = request->getParam("Kd_roll_angle")->value().toFloat();
+    if (request->hasParam("Kp_pitch_angle"))
+        Kp_pitch_angle = request->getParam("Kp_pitch_angle")->value().toFloat();
+    if (request->hasParam("Ki_pitch_angle"))
+        Ki_pitch_angle = request->getParam("Ki_pitch_angle")->value().toFloat();
+    if (request->hasParam("Kd_pitch_angle"))
+        Kd_pitch_angle = request->getParam("Kd_pitch_angle")->value().toFloat();
+    if (request->hasParam("Kp_yaw"))
+        Kp_yaw = request->getParam("Kp_yaw")->value().toFloat();
+    if (request->hasParam("Ki_yaw"))
+        Ki_yaw = request->getParam("Ki_yaw")->value().toFloat();
+    if (request->hasParam("Kd_yaw"))
+        Kd_yaw = request->getParam("Kd_yaw")->value().toFloat();
+    if (request->hasParam("morter1_buffer"))
+        morter1_buffer = request->getParam("morter1_buffer")->value().toInt();
+    if (request->hasParam("morter2_buffer"))
+        morter2_buffer = request->getParam("morter2_buffer")->value().toInt();
+    if (request->hasParam("morter3_buffer"))
+        morter3_buffer = request->getParam("morter3_buffer")->value().toInt();
+    if (request->hasParam("morter4_buffer"))
+        morter4_buffer = request->getParam("morter4_buffer")->value().toInt();
+
+    request->send(200, "text/plain", "Settings updated successfully");
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -559,6 +773,45 @@ void setup()
   Serial.println("PWM successfully attached to all motors");
 
   calibrateESCs();
+
+  // SPIFFSの初期化
+  if (!SPIFFS.begin(true))
+  {
+    Serial.println("An error has occurred while mounting SPIFFS");
+    return;
+  }
+  Serial.println("SPIFFS mounted successfully");
+
+  // Wi-Fi接続
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+  Serial.println(WiFi.localIP());
+  WiFi.printDiag(Serial);
+  delay(3000);
+
+  // サーバーのエンドポイントを設定
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(SPIFFS, "/index.html", "text/html");
+    });
+    server.on("/get", HTTP_GET, getSettings);
+    server.on("/set", HTTP_GET, setSettings);
+
+    // SPIFFS初期化
+    if (!SPIFFS.begin(true))
+    {
+        Serial.println("SPIFFS Mount Failed");
+        return;
+    }
+
+  // サーバー開始
+
+  server.begin();
+  Serial.println("HTTP server started");
 }
 
 void loop()
@@ -600,10 +853,10 @@ void loopDrone()
   // printRollPitchYaw();
   // printPIDoutput();
   // printYawPID();
-   printRollPID();
+  // printRollPID();
   //   printDes();
   //    printMotorCommands();
-  //ShowGyro();
+   ShowGyro();
 }
 
 int getChannelValue(int channelIndex)
@@ -685,7 +938,7 @@ void PIDControlCalcs()
   error_roll = roll_des - roll_IMU;
   integral_roll = integral_roll_prev + error_roll * deltaTime;
   integral_roll = constrain(integral_roll, -i_limit, i_limit); // Limit integrator to prevent saturating
-  derivative_roll = -(dpsX- init_dpsX);                                   
+  derivative_roll = -(dpsX - init_dpsX);
   roll_PID = roll_Weight * (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll - Kd_roll_angle * derivative_roll);
   roll_PID -= rollPIDError;
   roll_PID = constrain(roll_PID, -PID_Limit, PID_Limit);
@@ -693,7 +946,7 @@ void PIDControlCalcs()
   error_pitch = pitch_des - pitch_IMU;
   integral_pitch = integral_pitch_prev + error_pitch * deltaTime;
   integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
-  derivative_pitch = dpsY- init_dpsY;
+  derivative_pitch = dpsY - init_dpsY;
   pitch_PID = pitch_Weight * (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch - Kd_pitch_angle * derivative_pitch);
   pitch_PID -= pitchPIDError;
   pitch_PID = constrain(pitch_PID, -PID_Limit, PID_Limit);
@@ -702,7 +955,7 @@ void PIDControlCalcs()
   error_yaw = yaw_des - (dpsZ - init_dpsZ);
   integral_yaw = integral_yaw_prev + error_yaw * deltaTime;
   integral_yaw = constrain(integral_yaw, -i_limit, i_limit);
-  derivative_yaw = -(dpsZ- init_dpsZ);
+  derivative_yaw = -(dpsZ - init_dpsZ);
   yaw_PID = yaw_Weight * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw);
   yaw_PID = constrain(yaw_PID, -PID_Limit, PID_Limit);
 

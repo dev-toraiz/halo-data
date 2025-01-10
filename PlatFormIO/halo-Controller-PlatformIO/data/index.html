@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ESP32 PID Settings</title>
+    <script>
+      function updateSettings() {
+        const xhr = new XMLHttpRequest();
+        const params = new URLSearchParams();
+
+        // 各入力値をURLパラメータに追加
+        document.querySelectorAll("input").forEach((input) => {
+          params.append(input.name, input.value);
+        });
+
+        xhr.open("GET", `/set?${params.toString()}`, true);
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState === 4 && xhr.status === 200) {
+            document.getElementById("status").innerText =
+              "Settings updated successfully!";
+            fetchCurrentSettings(); // 現在の設定を再取得
+          }
+        };
+        xhr.send();
+      }
+
+      function fetchCurrentSettings() {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", "/get", true);
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState === 4 && xhr.status === 200) {
+            const settings = JSON.parse(xhr.responseText);
+            for (const key in settings) {
+              const input = document.querySelector(`input[name="${key}"]`);
+              if (input) input.value = settings[key];
+            }
+          }
+        };
+        xhr.send();
+      }
+
+      window.onload = fetchCurrentSettings;
+    </script>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #f4f4f4;
+      }
+      h1 {
+        text-align: center;
+        color: #2c3e50;
+        margin-bottom: 30px;
+      }
+      form {
+        background-color: #fff;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      }
+      .form-group {
+        margin-bottom: 20px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .form-group h2 {
+        color: #3498db;
+        border-bottom: 2px solid #3498db;
+        padding-bottom: 5px;
+        margin-bottom: 15px;
+        width: 100%;
+      }
+      .form-group div {
+        width: fit-content;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        color: #2c3e50;
+      }
+      input[type="text"] {
+        width: 100%;
+        padding: 8px;
+        box-sizing: border-box;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 16px;
+      }
+      input[type="text"]:focus {
+        outline: none;
+        border-color: #3498db;
+        box-shadow: 0 0 5px rgba(52, 152, 219, 0.5);
+      }
+      button {
+        display: block;
+        width: 100%;
+        padding: 10px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 18px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+      }
+      button:hover {
+        background-color: #3498db;
+      }
+      #status {
+        margin-top: 20px;
+        padding: 10px;
+        border-radius: 4px;
+        text-align: center;
+        font-weight: bold;
+      }
+      .success {
+        background-color: #d4edda;
+        color: #155724;
+      }
+      .error {
+        background-color: #f8d7da;
+        color: #721c24;
+      }
+      @media (max-width: 600px) {
+        form {
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ESP32 PID設定</h1>
+    <p id="status"></p>
+    <form onsubmit="event.preventDefault(); updateSettings();">
+     
+
+ 
+
+      <div class="form-group">
+        <h2>ロール角度PID</h2>
+        <div>
+          <label for="Kp_roll_angle">Kp_roll_angle</label>
+          <input
+            type="text"
+            id="Kp_roll_angle"
+            name="Kp_roll_angle"
+            placeholder="4.0"
+          />
+        </div>
+        <div>
+          <label for="Ki_roll_angle">Ki_roll_angle</label>
+          <input
+            type="text"
+            id="Ki_roll_angle"
+            name="Ki_roll_angle"
+            placeholder="0.02"
+          />
+        </div>
+        <div>
+          <label for="Kd_roll_angle">Kd_roll_angle</label>
+          <input
+            type="text"
+            id="Kd_roll_angle"
+            name="Kd_roll_angle"
+            placeholder="0.01"
+          />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <h2>ピッチ角度PID</h2>
+        <div>
+          <label for="Kp_pitch_angle">Kp_pitch_angle</label>
+          <input
+            type="text"
+            id="Kp_pitch_angle"
+            name="Kp_pitch_angle"
+            placeholder="4.0"
+          />
+        </div>
+        <div>
+          <label for="Ki_pitch_angle">Ki_pitch_angle</label>
+          <input
+            type="text"
+            id="Ki_pitch_angle"
+            name="Ki_pitch_angle"
+            placeholder="0.02"
+          />
+        </div>
+        <div>
+          <label for="Kd_pitch_angle">Kd_pitch_angle</label>
+          <input
+            type="text"
+            id="Kd_pitch_angle"
+            name="Kd_pitch_angle"
+            placeholder="0.01"
+          />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <h2>ヨーPID</h2>
+        <div>
+          <label for="Kp_yaw">Kp_yaw</label>
+          <input type="text" id="Kp_yaw" name="Kp_yaw" placeholder="4.0" />
+        </div>
+        <div>
+          <label for="Ki_yaw">Ki_yaw</label>
+          <input type="text" id="Ki_yaw" name="Ki_yaw" placeholder="0.02" />
+        </div>
+        <div>
+          <label for="Kd_yaw">Kd_yaw</label>
+          <input type="text" id="Kd_yaw" name="Kd_yaw" placeholder="0.01" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <h2>PIDゲイン範囲</h2>
+        <div>
+          <label for="Kp_range">Kp_range</label>
+          <input
+            type="text"
+            id="Kp_range"
+            name="Kp_range"
+            placeholder="20"
+          />
+        </div>
+        <div>
+          <label for="Kd_range">Kd_range</label>
+          <input
+            type="text"
+            id="Kd_range"
+            name="Kd_range"
+            placeholder="5"
+          />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <h2>重み設定</h2>
+        <div>
+          <label for="roll_Weight">roll_Weight</label>
+          <input
+            type="text"
+            id="roll_Weight"
+            name="roll_Weight"
+            placeholder="0.001"
+          />
+        </div>
+        <div>
+          <label for="pitch_Weight">pitch_Weight</label>
+          <input
+            type="text"
+            id="pitch_Weight"
+            name="pitch_Weight"
+            placeholder="0.001"
+          />
+        </div>
+        <div>
+          <label for="yaw_Weight">yaw_Weight</label>
+          <input
+            type="text"
+            id="yaw_Weight"
+            name="yaw_Weight"
+            placeholder="0.0001"
+          />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <h2>PID設定</h2>
+        <div>
+          <label for="PID_Limit">PID_Limit</label>
+          <input
+            type="text"
+            id="PID_Limit"
+            name="PID_Limit"
+            placeholder="0.1"
+          />
+        </div>
+        <div>
+          <label for="PID_Adjuster">PID_Adjuster</label>
+          <input
+            type="text"
+            id="PID_Adjuster"
+            name="PID_Adjuster"
+            placeholder="1.2"
+          />
+        </div>
+        <div>
+          <label for="min_rotation">min_rotation</label>
+          <input
+            type="text"
+            id="min_rotation"
+            name="min_rotation"
+            placeholder="200"
+          />
+        </div>
+        <div>
+          <label for="i_limit">i_limit</label>
+          <input
+            type="text"
+            id="i_limit"
+            name="i_limit"
+            placeholder="100"
+          />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <h2>最大値設定</h2>
+        <div>
+          <label for="maxRoll">maxRoll</label>
+          <input type="text" id="maxRoll" name="maxRoll" placeholder="10" />
+        </div>
+        <div>
+          <label for="maxPitch">maxPitch</label>
+          <input
+            type="text"
+            id="maxPitch"
+            name="maxPitch"
+            placeholder="10"
+          />
+        </div>
+        <div>
+          <label for="maxYaw">maxYaw</label>
+          <input type="text" id="maxYaw" name="maxYaw" placeholder="160" />
+        </div>
+        <div>
+          <label for="maxMotor">maxMotor</label>
+          <input
+            type="text"
+            id="maxMotor"
+            name="maxMotor"
+            placeholder="0.8"
+          />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <h2>モーターバッファ</h2>
+        <div>
+          <label for="morter1_buffer">morter1_buffer</label>
+          <input
+            type="text"
+            id="morter1_buffer"
+            name="morter1_buffer"
+            placeholder="24"
+          />
+        </div>
+        <div>
+          <label for="morter2_buffer">morter2_buffer</label>
+          <input
+            type="text"
+            id="morter2_buffer"
+            name="morter2_buffer"
+            placeholder="290"
+          />
+        </div>
+        <div>
+          <label for="morter3_buffer">morter3_buffer</label>
+          <input
+            type="text"
+            id="morter3_buffer"
+            name="morter3_buffer"
+            placeholder="130"
+          />
+        </div>
+        <div>
+          <label for="morter4_buffer">morter4_buffer</label>
+          <input
+            type="text"
+            id="morter4_buffer"
+            name="morter4_buffer"
+            placeholder="24"
+          />
+        </div>
+      </div>
+
+      <button type="submit">設定を更新</button>
+    </form>
+
+  </body>
+</html>
