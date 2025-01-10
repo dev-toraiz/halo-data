@@ -41,10 +41,7 @@ volatile int currentChannel = 0;            // 現在のチャネルインデッ
 #define m2Pin 26
 #define m3Pin 27
 #define m4Pin 32
-Servo ESC1; // サーボオブジェクトを作成
-Servo ESC2;
-Servo ESC3;
-Servo ESC4;
+Servo ESC1, ESC2, ESC3, ESC4;
 
 // PWM設定
 const int pwmFrequency = 50;  // 50Hz (20ms周期、一般的なESCに対応)
@@ -67,25 +64,25 @@ float q3 = 0.0f;
 
 // Controller parameters (this is where you "tune it".  It's best to use the WiFi interface to do it live and then update once its tuned.):
 float i_limit = 20;    // Integrator saturation level, mostly for safety (default 25.0)
-float maxRoll = 18.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxPitch = 18.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxYaw = 30.0;   // Max yaw rate in deg/sec (default 160.0)
+float maxRoll = 10.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxPitch = 10.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxYaw = 160.0;   // Max yaw rate in deg/sec (default 160.0)
 float maxMotor = 0.8;
 float Kp_range = 20;
 float Kd_range = 5;
 
 float parameter_rate = 1.0;
 
-float Kp_roll_angle = 6.06 * parameter_rate; // Roll P-gain
-float Ki_roll_angle = 0.00 * parameter_rate; // Roll I-gain
-float Kd_roll_angle = 0.83 * parameter_rate; // Roll D-gain
+float Kp_roll_angle = 2.5 * parameter_rate;    // Roll P-gain
+float Ki_roll_angle = 0.3 * parameter_rate; // Roll I-gain
+float Kd_roll_angle = 0.8 * parameter_rate;    // Roll D-gain
 
-float Kp_pitch_angle = 6.06 * parameter_rate; // Pitch P-gain
-float Ki_pitch_angle = 0.00 * parameter_rate; // Pitch I-gain
-float Kd_pitch_angle = 0.83 * parameter_rate; // Pitch D-gain
+float Kp_pitch_angle = 2.5 * parameter_rate;    // Pitch P-gain
+float Ki_pitch_angle = 0.3 * parameter_rate; // Pitch I-gain
+float Kd_pitch_angle = 0.8 * parameter_rate;    // Pitch D-gain
 
-float Kp_yaw = 30;   // Yaw P-gain default 30
-float Ki_yaw = .5;   // Yaw I-gain default 5
+float Kp_yaw = 10;   // Yaw P-gain default 30
+float Ki_yaw = .1;   // Yaw I-gain default 5
 float Kd_yaw = .015; // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)
 
 float stick_dampener = 0.3;
@@ -113,7 +110,7 @@ float pitchPIDError = 0.00;
 
 float roll_Weight = 0.001, pitch_Weight = 0.001, yaw_Weight = 0.0001;
 float PID_Limit = 0.10;
-float PID_Adjuster = 1.0; // PID制御の影響力を反映
+float PID_Adjuster = 1.2;   // PID制御の影響力を反映
 float min_rotation = 200; // ローターを回転させ続けるのに必要な最低限のスロットル
 float keep_rotating = false;
 
@@ -374,27 +371,18 @@ void calcRotation()
 
 void ShowGyro()
 {
+  float sg_gx=dpsX- init_dpsX ;
+  float sg_gy=dpsY- init_dpsY ;
+  float sg_gz=dpsZ- init_dpsZ ;
+  Serial.print("gx: ");
+  Serial.print(sg_gx);
 
-  Serial.print("init_angleX: ");
-  Serial.print(init_angleX);
-  Serial.print("angleX: ");
-  Serial.print(angleX);
-  Serial.print("GyroX: ");
-  Serial.print(GyroX);
+  Serial.print("gy: ");
+  Serial.print(sg_gy);
 
-  Serial.print("| init_angleY: ");
-  Serial.print(init_angleY);
-  Serial.print("angleY: ");
-  Serial.print(angleY);
-  Serial.print("GyroY: ");
-  Serial.print(GyroY);
 
-  Serial.print("| init_angleZ: ");
-  Serial.print(init_angleZ);
-  Serial.print("angleZ: ");
-  Serial.print(angleZ);
-  Serial.print("GyroZ: ");
-  Serial.println(GyroZ);
+  Serial.print("gz: ");
+  Serial.println(sg_gz);
 }
 
 void writeMPU6050(byte reg, byte data)
@@ -540,7 +528,7 @@ void setup()
   pinMode(ledPin2, OUTPUT);
   // 初期ステータスを設定
   currentStatus = All_On;
-  setLedPattern(currentStatus);
+  // setLedPattern(currentStatus);
 
   // レシーバー
   pinMode(PPM_PIN, INPUT_PULLUP);                 // ピンを入力モードに設定
@@ -597,7 +585,7 @@ void loop()
 
 void loopDrone()
 {
-  showRecievedData();
+  // showRecievedData();
   getIMUdata();                                                                      // Pulls raw gyro andaccelerometer data from IMU and applies LP filters to remove noise
   Madgwick6DOF(gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick, AccX, AccY, AccZ); // Updates roll_IMU, pitch_IMU, and yaw_IMU angle estimates (degrees)
   getDesiredAnglesAndThrottle();                                                     // Convert raw commands to normalized values based on saturated control limits
@@ -612,10 +600,10 @@ void loopDrone()
   // printRollPitchYaw();
   // printPIDoutput();
   // printYawPID();
-  // printRollPID();
+   printRollPID();
   //   printDes();
   //    printMotorCommands();
-  //    ShowGyro();
+  //ShowGyro();
 }
 
 int getChannelValue(int channelIndex)
@@ -681,7 +669,7 @@ void getDesiredAnglesAndThrottle()
   thro_des = (PWM_throttle - 1000.0) / 1000.0;     // Between 0 and 1
   roll_des = (PWM_roll - 1500.0) / 500.0;          // Between -1 and 1
   pitch_des = -((PWM_Elevation - 1500.0) / 500.0); // Between -1 and 1
-  yaw_des = (PWM_Rudd - 1500.0) / 500.0;           // Between -1 and 1
+  yaw_des = -(PWM_Rudd - 1500.0) / 500.0;          // Between -1 and 1
 
   // Constrain within normalized bounds
   thro_des = constrain(thro_des, 0.0, 1.0) * 0.6;         // Between 0 and 1
@@ -692,23 +680,12 @@ void getDesiredAnglesAndThrottle()
 
 void PIDControlCalcs()
 {
-  // if (PWM_throttle < 1300)
-  // { //This will keep the motors from spinning with the throttle at zero should the drone be sitting unlevel.
-  //   integral_roll_prev = 0;
-  //   integral_pitch_prev = 0;
-  //   error_yaw_prev = 0;
-  //   integral_yaw_prev = 0;
-  //   roll_PID=0;
-  //   pitch_PID=0;
-  //   yaw_PID=0;
-  //   return;
-  // }
 
   // Roll
   error_roll = roll_des - roll_IMU;
   integral_roll = integral_roll_prev + error_roll * deltaTime;
   integral_roll = constrain(integral_roll, -i_limit, i_limit); // Limit integrator to prevent saturating
-  derivative_roll = GyroX;                                     //(roll_des-roll_IMU-roll_des-previous_IMU)/dt=current angular velocity since last IMU read and therefore GyroX in deg/s
+  derivative_roll = -(dpsX- init_dpsX);                                   
   roll_PID = roll_Weight * (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll - Kd_roll_angle * derivative_roll);
   roll_PID -= rollPIDError;
   roll_PID = constrain(roll_PID, -PID_Limit, PID_Limit);
@@ -716,16 +693,16 @@ void PIDControlCalcs()
   error_pitch = pitch_des - pitch_IMU;
   integral_pitch = integral_pitch_prev + error_pitch * deltaTime;
   integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
-  derivative_pitch = GyroY;
+  derivative_pitch = dpsY- init_dpsY;
   pitch_PID = pitch_Weight * (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch - Kd_pitch_angle * derivative_pitch);
   pitch_PID -= pitchPIDError;
   pitch_PID = constrain(pitch_PID, -PID_Limit, PID_Limit);
 
   // Yaw
-  error_yaw = yaw_des - dpsZ;
+  error_yaw = yaw_des - (dpsZ - init_dpsZ);
   integral_yaw = integral_yaw_prev + error_yaw * deltaTime;
   integral_yaw = constrain(integral_yaw, -i_limit, i_limit);
-  derivative_yaw = (error_yaw - error_yaw_prev) / deltaTime;
+  derivative_yaw = -(dpsZ- init_dpsZ);
   yaw_PID = yaw_Weight * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw);
   yaw_PID = constrain(yaw_PID, -PID_Limit, PID_Limit);
 
@@ -741,10 +718,10 @@ void controlMixer()
   // DESCRIPTION: Mixes scaled commands from PID controller to actuator outputs based on vehicle configuration
 
   // Quad mixing. maxMotor is used to keep the motors from being too violent if you have a big battery and concers about that.
-  m1_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (-pitch_PID + roll_PID + yaw_PID); // Front left
-  m2_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (-pitch_PID - roll_PID - yaw_PID); // Front right
-  m3_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (pitch_PID - roll_PID + yaw_PID);  // Back Right
-  m4_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (pitch_PID + roll_PID - yaw_PID);  // Back Left
+  m1_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (-pitch_PID + roll_PID + yaw_PID);
+  m2_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (-pitch_PID - roll_PID - yaw_PID);
+  m3_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (pitch_PID - roll_PID + yaw_PID);
+  m4_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (pitch_PID + roll_PID - yaw_PID);
 
   m1_command_scaled = constrain(m1_command_scaled, 0, 1.0);
   m2_command_scaled = constrain(m2_command_scaled, 0, 1.0);
@@ -825,6 +802,27 @@ void commandMotors()
   m3_command_PWM = constrain(m3_command_PWM, throttle_min, throttle_max);
   m4_command_PWM = constrain(m4_command_PWM, throttle_min, throttle_max);
 
+  // もしプロポとの通信が切れた場合モーターを停止する
+  bool allZero = true;
+  // チャンネル値をチェック
+  for (int i = 0; i < CHANNELS; i++)
+  {
+    Serial.print(channelValues[i]);
+    if (channelValues[i] != 0)
+    {
+      allZero = false;
+    }
+  }
+  if (allZero)
+  {
+    m1_command_PWM = throttle_min;
+    m2_command_PWM = throttle_min;
+    m3_command_PWM = throttle_min;
+    m4_command_PWM = throttle_min;
+
+    // Serial.println("All channels are zero. Setting PWM to throttle_min.");
+  }
+
   // モーターにPWMを設定
   setMotorPWM(m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM, false);
 }
@@ -837,7 +835,7 @@ void calibrateESCs()
   Serial.println("Setting maximum throttle");
   delay(2000);
   currentStatus = Flash;
-  setLedPattern(currentStatus);
+  // setLedPattern(currentStatus);
   Serial.println("Setting minimum throttle");
   delay(2000);
 }
