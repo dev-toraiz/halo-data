@@ -21,12 +21,12 @@ const int mot4_pin = 32;
 
 const int ledPin1 = 18;
 
-#define CHANNELS 8    // 使用するチャネル数
-#define SYNC_GAP 3000 // 同期信号判定のしきい値 (マイクロ秒)
-#define PPM_PIN 4     // PPM信号の入力ピン
-volatile unsigned long lastPulseTime = 0;   // 前回のパルス時間
-volatile int channelValues[CHANNELS] = {0}; // 各チャネルの値を格納
-volatile int currentChannel = 0;            // 現在のチャネルインデックス
+#define CHANNELS 8                             // 使用するチャネル数
+#define SYNC_GAP 3000                          // 同期信号判定のしきい値 (マイクロ秒)
+#define PPM_PIN 4                              // PPM信号の入力ピン
+volatile unsigned long lastPulseTime = 0;      // 前回のパルス時間
+volatile int channelValues[CHANNELS] = { 0 };  // 各チャネルの値を格納
+volatile int currentChannel = 0;               // 現在のチャネルインデックス
 
 // The LOOP_TIMING is based on the IMU.  For the Arduino_LSM6DSOX, it is 104Hz.  So, the loop time is set a little longer so the IMU has time to update from the control change.
 #define LOOP_TIMING 100
@@ -38,7 +38,7 @@ unsigned long current_time, prev_time;
 unsigned long print_counter, serial_counter;
 
 unsigned long previousMillis = 0;
-unsigned long currentMillis; // Declare currentMillis as a global variable
+unsigned long currentMillis;  // Declare currentMillis as a global variable
 float frameRate;
 
 // float voltage;
@@ -67,6 +67,16 @@ float DRatePitch = DRateRoll;
 float PRateYaw = 4.2;
 float IRateYaw = 2.8;
 float DRateYaw = 0;
+
+// Controller parameters (this is where you "tune it".  It's best to use the WiFi interface to do it live and then update once its tuned.):
+float i_limit = 20;     // Integrator saturation level, mostly for safety (default 25.0)
+float maxRoll = 30.0;   // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxPitch = 30.0;  // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxYaw = 160.0;   // Max yaw rate in deg/sec (default 160.0)
+const int throttle_limit = 1800;
+const int throttle_max = 2000;  // 最大PWM
+const int throttle_min = 1000;  // 最小PWM
+int ThrottleIdle = 1170;
 
 uint32_t LoopTimer;
 float t = 0.006;  //time cycle
@@ -100,36 +110,29 @@ void kalman_1d(float KalmanState, float KalmanUncertainty, float KalmanInput, fl
 volatile float MotorInput1, MotorInput2, MotorInput3, MotorInput4;
 
 // 割り込み関数
-void IRAM_ATTR ppmInterrupt()
-{
-  unsigned long pulseTime = micros();                   // 現在の時間を取得
-  unsigned long pulseWidth = pulseTime - lastPulseTime; // パルス幅を計算
+void IRAM_ATTR ppmInterrupt() {
+  unsigned long pulseTime = micros();                    // 現在の時間を取得
+  unsigned long pulseWidth = pulseTime - lastPulseTime;  // パルス幅を計算
   lastPulseTime = pulseTime;
 
-  if (pulseWidth > SYNC_GAP)
-  {                     // 同期信号を検出
-    currentChannel = 0; // チャネルをリセット
-  }
-  else
-  {
-    if (currentChannel < CHANNELS)
-    {                                             // 有効なチャネル範囲内であれば
-      channelValues[currentChannel] = pulseWidth; // チャネル値を格納
-      currentChannel++;                           // 次のチャネルへ
+  if (pulseWidth > SYNC_GAP) {  // 同期信号を検出
+    currentChannel = 0;         // チャネルをリセット
+  } else {
+    if (currentChannel < CHANNELS) {               // 有効なチャネル範囲内であれば
+      channelValues[currentChannel] = pulseWidth;  // チャネル値を格納
+      currentChannel++;                            // 次のチャネルへ
     }
   }
 }
-int getChannelValue(int channelIndex)
-{
-  if (channelIndex >= 0 && channelIndex < CHANNELS)
-  {
+int getChannelValue(int channelIndex) {
+  if (channelIndex >= 0 && channelIndex < CHANNELS) {
+
+    // channelValues[channelIndex] = constrain(channelValues[channelIndex], 1000, 2000);
     return channelValues[channelIndex];
-  }
-  else
-  {
+  } else {
     Serial.print("Error: Invalid channel index ");
     Serial.println(channelIndex);
-    return 0; // 無効なインデックスの場合はデフォルト値を返す
+    return 0;
   }
 }
 
@@ -161,10 +164,10 @@ void gyro_signals(void) {
   int16_t GyroY = Wire.read() << 8 | Wire.read();
   int16_t GyroZ = Wire.read() << 8 | Wire.read();
   RateRoll = (float)GyroX / 65.5;
-  RatePitch = (float)GyroY / 65.5;
+  RatePitch = -(float)GyroY / 65.5;
   RateYaw = (float)GyroZ / 65.5;
   AccX = (float)AccXLSB / 4096;
-  AccY = (float)AccYLSB / 4096;
+  AccY = -(float)AccYLSB / 4096;
   AccZ = (float)AccZLSB / 4096;
   AccZ = AccZ - 0.26;  // calibration offset
   AngleRoll = atan(AccY / sqrt(AccX * AccX + AccZ * AccZ)) * 1 / (3.142 / 180);
@@ -204,12 +207,33 @@ void reset_pid(void) {
   PrevItermAnglePitch = 0;
 }
 
+
+void calibrateESCs()
+{
+  Serial.println("Starting calibration");
+  mot1.write(map(throttle_max, throttle_min, throttle_max, 0, 180));
+  mot2.write(map(throttle_max, throttle_min, throttle_max, 0, 180));
+  mot3.write(map(throttle_max, throttle_min, throttle_max, 0, 180));
+  mot4.write(map(throttle_max, throttle_min, throttle_max, 0, 180));
+
+  Serial.println("Setting maximum throttle");
+  delay(2000);
+  
+  mot1.write(map(throttle_min, throttle_min, throttle_max, 0, 180));
+  mot2.write(map(throttle_min, throttle_min, throttle_max, 0, 180));
+  mot3.write(map(throttle_min, throttle_min, throttle_max, 0, 180));
+  mot4.write(map(throttle_min, throttle_min, throttle_max, 0, 180));
+  Serial.println("Setting minimum throttle");
+  delay(2000);
+}
+
 void setup(void) {
 
   Serial.begin(115200);
 
-  pinMode(PPM_PIN, INPUT_PULLUP);                 // ピンを入力モードに設定
-  attachInterrupt(PPM_PIN, ppmInterrupt, RISING); // 割り込みを設定
+  Serial.println("");
+  pinMode(PPM_PIN, INPUT_PULLUP);                  // ピンを入力モードに設定
+  attachInterrupt(PPM_PIN, ppmInterrupt, RISING);  // 割り込みを設定
   Serial.println("PPM Receiver Initialized");
 
 
@@ -249,28 +273,20 @@ void setup(void) {
   mot4.attach(mot4_pin, 1000, 2000);
   Serial.println("PWM successfully attached to all motors");
 
-  //to stop esc from beeping
-  mot1.write(0);
-  mot2.write(0);
-  mot3.write(0);
-  mot4.write(0);
-  digitalWrite(ledPin1, LOW);
-  digitalWrite(ledPin1, HIGH);
-  delay(2000);
-  digitalWrite(ledPin1, LOW);
-  delay(2000);
+  calibrateESCs();
 
 
-  for (RateCalibrationNumber = 0; RateCalibrationNumber < 4000; RateCalibrationNumber++) {
+  int total = 1000;
+  for (RateCalibrationNumber = 0; RateCalibrationNumber < total; RateCalibrationNumber++) {
     gyro_signals();
     RateCalibrationRoll += RateRoll;
     RateCalibrationPitch += RatePitch;
     RateCalibrationYaw += RateYaw;
     delay(1);
   }
-  RateCalibrationRoll /= 4000;
-  RateCalibrationPitch /= 4000;
-  RateCalibrationYaw /= 4000;
+  RateCalibrationRoll /= total;
+  RateCalibrationPitch /= total;
+  RateCalibrationYaw /= total;
   //Gyro Calibrated Values
   // Serial.print("Gyro Calib: ");
   // Serial.print(RateCalibrationRoll);
@@ -308,10 +324,16 @@ void loop(void) {
   KalmanAnglePitch = Kalman1DOutput[0];
   KalmanUncertaintyAnglePitch = Kalman1DOutput[1];
 
-  DesiredAngleRoll = 0.1 * (getChannelValue(0) - 1500);
-  DesiredAnglePitch = 0.1 * (getChannelValue(1) - 1500);
-  InputThrottle = getChannelValue(2);
-  DesiredRateYaw = 0.15 * (getChannelValue(3) - 1500);
+  DesiredAngleRoll = (getChannelValue(0) - 1500.0) / 500.0;   // Between -1 and 1
+  DesiredAnglePitch = (getChannelValue(1) - 1500.0) / 500.0;  // Between -1 and 1
+  DesiredRateYaw = (getChannelValue(3) - 1500.0) / 500.0;     // Between -1 and 1
+
+
+  // Constrain within normalized bounds
+  InputThrottle = constrain(getChannelValue(2), throttle_min, throttle_limit);  // Between 1000 and 1800
+  DesiredAngleRoll = constrain(DesiredAngleRoll, -1.0, 1.0) * maxRoll;          // Between -maxRoll and +maxRoll
+  DesiredAnglePitch = constrain(DesiredAnglePitch, -1.0, 1.0) * maxPitch;       // Between -maxPitch and +maxPitch
+  DesiredRateYaw = constrain(DesiredRateYaw, -1.0, 1.0) * maxYaw;               // Between -maxYaw and +maxYaw
 
   ErrorAngleRoll = DesiredAngleRoll - KalmanAngleRoll;
   ErrorAnglePitch = DesiredAnglePitch - KalmanAnglePitch;
@@ -345,10 +367,6 @@ void loop(void) {
   PrevErrorRateYaw = PIDReturn[1];
   PrevItermRateYaw = PIDReturn[2];
 
-  if (InputThrottle > 1800) {
-    InputThrottle = 1800;
-  }
-
 
   MotorInput1 = (InputThrottle - InputRoll - InputPitch - InputYaw);  // front right - counter clockwise
   MotorInput2 = (InputThrottle - InputRoll + InputPitch + InputYaw);  // rear right - clockwise
@@ -356,24 +374,24 @@ void loop(void) {
   MotorInput4 = (InputThrottle + InputRoll - InputPitch + InputYaw);  //front left - clockwise
 
 
-  if (MotorInput1 > 2000) {
-    MotorInput1 = 1999;
+  if (MotorInput1 > throttle_max) {
+    MotorInput1 = throttle_max - 1;
   }
 
-  if (MotorInput2 > 2000) {
-    MotorInput2 = 1999;
+  if (MotorInput2 > throttle_max) {
+    MotorInput1 = throttle_max - 1;
   }
 
-  if (MotorInput3 > 2000) {
-    MotorInput3 = 1999;
+  if (MotorInput3 > throttle_max) {
+    MotorInput1 = throttle_max - 1;
   }
 
-  if (MotorInput4 > 2000) {
-    MotorInput4 = 1999;
+  if (MotorInput4 > throttle_max) {
+    MotorInput1 = throttle_max - 1;
   }
 
 
-  int ThrottleIdle = 1150;
+
   if (MotorInput1 < ThrottleIdle) {
     MotorInput1 = ThrottleIdle;
   }
@@ -408,38 +426,41 @@ void loop(void) {
   // }
 
   //Reciever signals
-  // Serial.print(getChannelValue(0));
-  // Serial.print(" - ");
-  // Serial.print(getChannelValue(1));
-  // Serial.print(" - ");
-  // Serial.print(getChannelValue(2));
-  // Serial.print(" - ");
-  // Serial.print(getChannelValue(3));
-  // Serial.print(" --- ");
+  /*Serial.print(getChannelValue(0));
+  Serial.print(" - ");
+  Serial.print(getChannelValue(1));
+  Serial.print(" - ");
+  Serial.print(getChannelValue(2));
+  Serial.print(" - ");
+  Serial.print(getChannelValue(3));
+  Serial.print(" - ");
+  Serial.print(getChannelValue(4));
+  Serial.print(" - ");
+  Serial.println(getChannelValue(5));*/
 
-  //   // Serial.print(getChannelValue(4));
-  //   // Serial.print(" - ");
-  //   // Serial.print(getChannelValue(5));
-  //   // Serial.print(" - ");
+  // Receiver translated rates
+  /*Serial.print("InputThrottle: ");
+  Serial.print(InputThrottle);
+  Serial.print("Desired Rate Roll: ");
+  Serial.print(DesiredAngleRoll);
+  Serial.print(" - ");
+  Serial.print("Desired Rate Pitch: ");
+  Serial.print(DesiredAnglePitch);
+  Serial.print(" - ");
+  Serial.print("Desired Rate Yaw: ");
+  Serial.println(DesiredRateYaw);*/
+
 
   //Motor PWMs in us
-  // Serial.print("MotVals-");
-  // Serial.print(MotorInput1);
-  // Serial.print("  ");
-  // Serial.print(MotorInput2);
-  // Serial.print("  ");
-  // Serial.print(MotorInput3);
-  // Serial.print("  ");
-  // Serial.print(MotorInput4);
-  // Serial.print(" -- ");
+  Serial.print("MotVals-");
+  Serial.print(MotorInput1);
+  Serial.print("  ");
+  Serial.print(MotorInput2);
+  Serial.print("  ");
+  Serial.print(MotorInput3);
+  Serial.print("  ");
+  Serial.println(MotorInput4);
 
-  // //Reciever translated rates
-  //   Serial.print(DesiredRateRoll);
-  //   Serial.print("  ");
-  //   Serial.print(DesiredRatePitch);
-  //   Serial.print("  ");
-  //   Serial.print(DesiredRateYaw);
-  //   Serial.print(" -- ");
 
   // //Gyro Rates
   // Serial.print(" Gyro rates:");
