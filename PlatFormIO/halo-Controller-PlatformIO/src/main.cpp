@@ -68,9 +68,9 @@ float q2 = 0.0f;
 float q3 = 0.0f;
 
 // Controller parameters (this is where you "tune it".  It's best to use the WiFi interface to do it live and then update once its tuned.):
-float i_limit = 22;    // Integrator saturation level, mostly for safety (default 25.0)
-float maxRoll = 20.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxPitch = 20.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float i_limit = 20;    // Integrator saturation level, mostly for safety (default 25.0)
+float maxRoll = 14.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxPitch = 14.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
 float maxYaw = 160.0;  // Max yaw rate in deg/sec (default 160.0)
 float maxMotor = 0.7;
 float Kp_range = 20;
@@ -80,17 +80,17 @@ float hoverRoll = 0; //-1 to 1
 float hoverPitch = 0.1;
 float hoverYaw = 0.1;
      
-float parameter_rate = 1.0;
+float parameter_rate = 1;
 
-float PID_Adjuster = 0.7;
+float PID_Adjuster = 0.72;
 
-float Kp_roll_angle = 1.8 * parameter_rate;   // Roll P-gain
-float Ki_roll_angle = 0.18 * parameter_rate; // Roll I-gain
-float Kd_roll_angle = 1.44 * parameter_rate; // Roll D-gain
+float Kp_roll_angle = 2.3 * parameter_rate;   // Roll P-gain
+float Ki_roll_angle = 0.01 * parameter_rate; // Roll I-gain
+float Kd_roll_angle = 1.3 * parameter_rate; // Roll D-gain
 
-float Kp_pitch_angle = 2.0 * parameter_rate;   // Pitch P-gain
-float Ki_pitch_angle = 0.18 * parameter_rate; // Pitch I-gain
-float Kd_pitch_angle = 1.44 * parameter_rate; // Pitch D-gain
+float Kp_pitch_angle = 2.3 * parameter_rate;   // Pitch P-gain
+float Ki_pitch_angle = 0.01 * parameter_rate; // Pitch I-gain
+float Kd_pitch_angle = 1.3 * parameter_rate; // Pitch D-gain
 
 float Kp_yaw = 10;   // Yaw P-gain default 30
 float Ki_yaw = .1;   // Yaw I-gain default 5
@@ -870,10 +870,10 @@ void loopDrone()
   // printAcc();
   // printGyro();
   // printRollPitchYaw();
-  // printPIDoutput();
+   printPIDoutput();
   // printYawPID();
   // printRollPID();
-   printDes();
+   //printDes();
   // printMotorCommands();
   // ShowGyro();
 }
