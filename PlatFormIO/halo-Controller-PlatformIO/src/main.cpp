@@ -8,7 +8,7 @@
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
 
-// SDA（データライン）: GPIO21
+// SDA（データライン）: GPIO21Magwickフィルター
 // SCL（クロックライン）: GPIO22
 
 #define CHANNELS 8    // 使用するチャネル数
