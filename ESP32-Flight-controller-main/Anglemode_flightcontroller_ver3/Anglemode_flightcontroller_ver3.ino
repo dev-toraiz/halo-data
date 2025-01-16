@@ -69,7 +69,7 @@ float IRateYaw = 2.8;
 float DRateYaw = 0;
 
 // Controller parameters (this is where you "tune it".  It's best to use the WiFi interface to do it live and then update once its tuned.):
-float i_limit = 20;     // Integrator saturation level, mostly for safety (default 25.0)
+float i_limit = 400;     // Integrator saturation level, mostly for safety (default 25.0)
 float maxRoll = 30.0;   // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
 float maxPitch = 30.0;  // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
 float maxYaw = 160.0;   // Max yaw rate in deg/sec (default 160.0)
@@ -163,13 +163,13 @@ void gyro_signals(void) {
   int16_t GyroX = Wire.read() << 8 | Wire.read();
   int16_t GyroY = Wire.read() << 8 | Wire.read();
   int16_t GyroZ = Wire.read() << 8 | Wire.read();
-  RateRoll = (float)GyroX / 65.5;
+  RateRoll = -(float)GyroX / 65.5;
   RatePitch = -(float)GyroY / 65.5;
   RateYaw = (float)GyroZ / 65.5;
-  AccX = (float)AccXLSB / 4096;
+  AccX = -(float)AccXLSB / 4096;
   AccY = -(float)AccYLSB / 4096;
   AccZ = (float)AccZLSB / 4096;
-  AccZ = AccZ - 0.26;  // calibration offset
+  AccZ = AccZ - 0;  // calibration offset
   AngleRoll = atan(AccY / sqrt(AccX * AccX + AccZ * AccZ)) * 1 / (3.142 / 180);
   AnglePitch = -atan(AccX / sqrt(AccY * AccY + AccZ * AccZ)) * 1 / (3.142 / 180);
 }
@@ -177,17 +177,17 @@ void gyro_signals(void) {
 void pid_equation(float Error, float P, float I, float D, float PrevError, float PrevIterm) {
   float Pterm = P * Error;
   float Iterm = PrevIterm + (I * (Error + PrevError) * (t / 2));
-  if (Iterm > 400) {
-    Iterm = 400;
-  } else if (Iterm < -400) {
-    Iterm = -400;
+  if (Iterm > i_limit) {
+    Iterm = i_limit;
+  } else if (Iterm < -i_limit) {
+    Iterm = -i_limit;
   }
   float Dterm = D * ((Error - PrevError) / t);
   float PIDOutput = Pterm + Iterm + Dterm;
-  if (PIDOutput > 400) {
-    PIDOutput = 400;
-  } else if (PIDOutput < -400) {
-    PIDOutput = -400;
+  if (PIDOutput > i_limit) {
+    PIDOutput = i_limit;
+  } else if (PIDOutput < -i_limit) {
+    PIDOutput = -i_limit;
   }
   PIDReturn[0] = PIDOutput;
   PIDReturn[1] = Error;
@@ -326,7 +326,7 @@ void loop(void) {
 
   DesiredAngleRoll = (getChannelValue(0) - 1500.0) / 500.0;   // Between -1 and 1
   DesiredAnglePitch = (getChannelValue(1) - 1500.0) / 500.0;  // Between -1 and 1
-  DesiredRateYaw = (getChannelValue(3) - 1500.0) / 500.0;     // Between -1 and 1
+  DesiredRateYaw = (-getChannelValue(3) - 1500.0) / 500.0;     // Between -1 and 1
 
 
   // Constrain within normalized bounds
