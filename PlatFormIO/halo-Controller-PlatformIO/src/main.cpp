@@ -8,7 +8,7 @@
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
 
-// SDA（データライン）: GPIO21Magwickフィルター
+// SDA（データライン）: GPIO21
 // SCL（クロックライン）: GPIO22
 
 #define CHANNELS 8    // 使用するチャネル数
@@ -17,18 +17,6 @@
 
 const int ledPin1 = 18; // LED1が接続されているピン番号
 const int ledPin2 = 19; // LED2が接続されているピン番号
-// 状態を定義
-enum Status
-{
-  All_On,
-  All_Off,
-  Slow_Blink,
-  Alternating_1,
-  Alternating_2,
-  Alternating_3,
-  Flash
-};
-Status currentStatus = All_On; // 初期ステータス
 
 MPU6050 mpu;
 Madgwick MadgwickFilter;
@@ -36,7 +24,6 @@ volatile unsigned long lastPulseTime = 0;   // 前回のパルス時間
 volatile int channelValues[CHANNELS] = {0}; // 各チャネルの値を格納
 volatile int currentChannel = 0;            // 現在のチャネルインデックス
 
-// The LOOP_TIMING is based on the IMU.  For the Arduino_LSM6DSOX, it is 104Hz.  So, the loop time is set a little longer so the IMU has time to update from the control change.
 #define LOOP_TIMING 100
 
 // モーターピン定義
@@ -55,10 +42,10 @@ const int throttle_min = 1000; // 最小PWM
 
 const float throttle_limit = 0.9;
 
-int morter1_buffer = 0;  // RL
+int morter1_buffer = 0;   // RL
 int morter2_buffer = 320; // RR
 int morter3_buffer = 170; // FR
-int morter4_buffer = 0;  // FL
+int morter4_buffer = 0;   // FL
 
 // madgwick
 float B_madgwick = 0.04; //(default 0.04)
@@ -79,18 +66,18 @@ float Kd_range = 5;
 float hoverRoll = 0; //-1 to 1
 float hoverPitch = 0.1;
 float hoverYaw = 0.1;
-     
+
 float parameter_rate = 1;
 
 float PID_Adjuster = 0.72;
 
-float Kp_roll_angle = 2.3 * parameter_rate;   // Roll P-gain
+float Kp_roll_angle = 2.3 * parameter_rate;  // Roll P-gain
 float Ki_roll_angle = 0.01 * parameter_rate; // Roll I-gain
-float Kd_roll_angle = 1.3 * parameter_rate; // Roll D-gain
+float Kd_roll_angle = 1.3 * parameter_rate;  // Roll D-gain
 
-float Kp_pitch_angle = 2.3 * parameter_rate;   // Pitch P-gain
+float Kp_pitch_angle = 2.3 * parameter_rate;  // Pitch P-gain
 float Ki_pitch_angle = 0.01 * parameter_rate; // Pitch I-gain
-float Kd_pitch_angle = 1.3 * parameter_rate; // Pitch D-gain
+float Kd_pitch_angle = 1.3 * parameter_rate;  // Pitch D-gain
 
 float Kp_yaw = 10;   // Yaw P-gain default 30
 float Ki_yaw = .1;   // Yaw I-gain default 5
@@ -171,125 +158,6 @@ unsigned long volA, volB;
 
 int m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM;
 
-// 定数動的変更
-//  Wi-Fi設定
-const char *ssid = "IODATA-523c9c-2G";
-const char *password = "MKneN48553445";
-
-// サーバーのポート番号
-AsyncWebServer server(80);
-
-String processor(const String &var)
-{
-  if (var == "ROLL_WEIGHT")
-  {
-    return String(roll_Weight);
-  }
-  else if (var == "PITCH_WEIGHT")
-  {
-    return String(pitch_Weight);
-  }
-  else if (var == "YAW_WEIGHT")
-  {
-    return String(yaw_Weight);
-  }
-  else if (var == "PID_LIMIT")
-  {
-    return String(PID_Limit);
-  }
-  else if (var == "PID_ADJUSTER")
-  {
-    return String(PID_Adjuster);
-  }
-  else if (var == "MIN_ROTATION")
-  {
-    return String(min_rotation);
-  }
-  else if (var == "I_LIMIT")
-  {
-    return String(i_limit);
-  }
-  else if (var == "MAX_ROLL")
-  {
-    return String(maxRoll);
-  }
-  else if (var == "MAX_PITCH")
-  {
-    return String(maxPitch);
-  }
-  else if (var == "MAX_YAW")
-  {
-    return String(maxYaw);
-  }
-  else if (var == "MAX_MOTOR")
-  {
-    return String(maxMotor);
-  }
-  else if (var == "KP_RANGE")
-  {
-    return String(Kp_range);
-  }
-  else if (var == "KD_RANGE")
-  {
-    return String(Kd_range);
-  }
-  else if (var == "KP_ROLL_ANGLE")
-  {
-    return String(Kp_roll_angle);
-  }
-  else if (var == "KI_ROLL_ANGLE")
-  {
-    return String(Ki_roll_angle);
-  }
-  else if (var == "KD_ROLL_ANGLE")
-  {
-    return String(Kd_roll_angle);
-  }
-  else if (var == "KP_PITCH_ANGLE")
-  {
-    return String(Kp_pitch_angle);
-  }
-  else if (var == "KI_PITCH_ANGLE")
-  {
-    return String(Ki_pitch_angle);
-  }
-  else if (var == "KD_PITCH_ANGLE")
-  {
-    return String(Kd_pitch_angle);
-  }
-  else if (var == "KP_YAW")
-  {
-    return String(Kp_yaw);
-  }
-  else if (var == "KI_YAW")
-  {
-    return String(Ki_yaw);
-  }
-  else if (var == "KD_YAW")
-  {
-    return String(Kd_yaw);
-  }
-  else if (var == "MORTER1_BUFFER")
-  {
-    return String(morter1_buffer);
-  }
-  else if (var == "MORTER2_BUFFER")
-  {
-    return String(morter2_buffer);
-  }
-  else if (var == "MORTER3_BUFFER")
-  {
-    return String(morter3_buffer);
-  }
-  else if (var == "MORTER4_BUFFER")
-  {
-    return String(morter4_buffer);
-  }
-
-  // その他未定義のパラメータの場合は空文字を返す
-  return String();
-}
-
 // 関数を宣言
 //  プロトタイプ宣言（関数宣言）
 void calibrateESCs();
@@ -314,22 +182,6 @@ void printYawPID();
 void printRollPID();
 void showRecievedData();
 
-int readChannel(int channelInput, int minLimit, int maxLimit, int defaultValue)
-{
-  int ch = pulseIn(channelInput, HIGH, 30000);
-  if (ch < 100)
-    return defaultValue;
-  return map(ch, 1000, 2000, minLimit, maxLimit);
-}
-
-bool redSwitch(byte channelInput, bool defaultValue)
-{
-  int intDefaultValue = (defaultValue) ? 100 : 0;
-  int ch = readChannel(channelInput, 0, 100, intDefaultValue);
-  return (ch > 50);
-}
-
-// 割り込み関数
 void IRAM_ATTR ppmInterrupt()
 {
   unsigned long pulseTime = micros();                   // 現在の時間を取得
@@ -337,8 +189,8 @@ void IRAM_ATTR ppmInterrupt()
   lastPulseTime = pulseTime;
 
   if (pulseWidth > SYNC_GAP)
-  {                     // 同期信号を検出
-    currentChannel = 0; // チャネルをリセット
+  {                   
+    currentChannel = 0; 
   }
   else
   {
@@ -347,100 +199,6 @@ void IRAM_ATTR ppmInterrupt()
       channelValues[currentChannel] = pulseWidth; // チャネル値を格納
       currentChannel++;                           // 次のチャネルへ
     }
-  }
-}
-
-// 点滅パターンを設定する関数
-void setLedPattern(Status status)
-{
-  switch (status)
-  {
-  case All_On:
-    digitalWrite(ledPin1, HIGH);
-    digitalWrite(ledPin2, HIGH);
-    break;
-
-  case All_Off:
-    digitalWrite(ledPin1, LOW);
-    digitalWrite(ledPin2, LOW);
-    break;
-
-  case Slow_Blink:
-    digitalWrite(ledPin1, HIGH);
-    digitalWrite(ledPin2, HIGH);
-    delay(1000);
-    digitalWrite(ledPin1, LOW);
-    digitalWrite(ledPin2, LOW);
-    delay(1000);
-    break;
-
-  case Alternating_1:
-    digitalWrite(ledPin1, HIGH);
-    digitalWrite(ledPin2, LOW);
-    delay(100);
-    digitalWrite(ledPin1, LOW);
-    digitalWrite(ledPin2, HIGH);
-    delay(100);
-    break;
-
-  case Alternating_2:
-    digitalWrite(ledPin1, HIGH);
-    digitalWrite(ledPin2, LOW);
-    delay(100);
-    digitalWrite(ledPin1, LOW);
-    delay(100);
-    digitalWrite(ledPin1, HIGH);
-    delay(100);
-
-    digitalWrite(ledPin1, LOW);
-    digitalWrite(ledPin2, HIGH);
-    delay(100);
-    digitalWrite(ledPin2, LOW);
-    delay(100);
-    digitalWrite(ledPin2, HIGH);
-    delay(100);
-    break;
-
-  case Alternating_3:
-    digitalWrite(ledPin1, HIGH);
-    digitalWrite(ledPin2, LOW);
-    delay(100);
-    digitalWrite(ledPin1, LOW);
-    delay(100);
-    digitalWrite(ledPin1, HIGH);
-    delay(100);
-    digitalWrite(ledPin1, LOW);
-    delay(100);
-    digitalWrite(ledPin1, HIGH);
-    delay(100);
-
-    digitalWrite(ledPin1, LOW);
-    digitalWrite(ledPin2, HIGH);
-    delay(100);
-    digitalWrite(ledPin2, LOW);
-    delay(100);
-    digitalWrite(ledPin2, HIGH);
-    delay(100);
-    digitalWrite(ledPin2, LOW);
-    delay(100);
-    digitalWrite(ledPin2, HIGH);
-    delay(100);
-    break;
-    ;
-
-  case Flash:
-    digitalWrite(ledPin1, HIGH);
-    digitalWrite(ledPin2, LOW);
-    delay(50);
-    digitalWrite(ledPin1, LOW);
-    delay(1000);
-
-    digitalWrite(ledPin2, HIGH);
-    digitalWrite(ledPin1, LOW);
-    delay(50);
-    digitalWrite(ledPin2, LOW);
-    delay(1000);
-    break;
   }
 }
 
@@ -655,99 +413,6 @@ void AcceleroMeterAngleSetup()
   Serial.println();
 }
 
-// 現在の設定値をJSONで返す
-void getSettings(AsyncWebServerRequest *request)
-{
-  String response = "{";
-  response += "\"roll_Weight\":" + String(roll_Weight) + ",";
-  response += "\"pitch_Weight\":" + String(pitch_Weight) + ",";
-  response += "\"yaw_Weight\":" + String(yaw_Weight) + ",";
-  response += "\"PID_Limit\":" + String(PID_Limit) + ",";
-  response += "\"PID_Adjuster\":" + String(PID_Adjuster) + ",";
-  response += "\"min_rotation\":" + String(min_rotation) + ",";
-  response += "\"i_limit\":" + String(i_limit) + ",";
-  response += "\"maxRoll\":" + String(maxRoll) + ",";
-  response += "\"maxPitch\":" + String(maxPitch) + ",";
-  response += "\"maxYaw\":" + String(maxYaw) + ",";
-  response += "\"maxMotor\":" + String(maxMotor) + ",";
-  response += "\"Kp_range\":" + String(Kp_range) + ",";
-  response += "\"Kd_range\":" + String(Kd_range) + ",";
-  response += "\"Kp_roll_angle\":" + String(Kp_roll_angle) + ",";
-  response += "\"Ki_roll_angle\":" + String(Ki_roll_angle) + ",";
-  response += "\"Kd_roll_angle\":" + String(Kd_roll_angle) + ",";
-  response += "\"Kp_pitch_angle\":" + String(Kp_pitch_angle) + ",";
-  response += "\"Ki_pitch_angle\":" + String(Ki_pitch_angle) + ",";
-  response += "\"Kd_pitch_angle\":" + String(Kd_pitch_angle) + ",";
-  response += "\"Kp_yaw\":" + String(Kp_yaw) + ",";
-  response += "\"Ki_yaw\":" + String(Ki_yaw) + ",";
-  response += "\"Kd_yaw\":" + String(Kd_yaw) + ",";
-  response += "\"morter1_buffer\":" + String(morter1_buffer) + ",";
-  response += "\"morter2_buffer\":" + String(morter2_buffer) + ",";
-  response += "\"morter3_buffer\":" + String(morter3_buffer) + ",";
-  response += "\"morter4_buffer\":" + String(morter4_buffer);
-  response += "}";
-  request->send(200, "application/json", response);
-}
-
-// 設定値を更新
-void setSettings(AsyncWebServerRequest *request)
-{
-  if (request->hasParam("roll_Weight"))
-    roll_Weight = request->getParam("roll_Weight")->value().toFloat();
-  if (request->hasParam("pitch_Weight"))
-    pitch_Weight = request->getParam("pitch_Weight")->value().toFloat();
-  if (request->hasParam("yaw_Weight"))
-    yaw_Weight = request->getParam("yaw_Weight")->value().toFloat();
-  if (request->hasParam("PID_Limit"))
-    PID_Limit = request->getParam("PID_Limit")->value().toFloat();
-  if (request->hasParam("PID_Adjuster"))
-    PID_Adjuster = request->getParam("PID_Adjuster")->value().toFloat();
-  if (request->hasParam("min_rotation"))
-    min_rotation = request->getParam("min_rotation")->value().toFloat();
-  if (request->hasParam("i_limit"))
-    i_limit = request->getParam("i_limit")->value().toFloat();
-  if (request->hasParam("maxRoll"))
-    maxRoll = request->getParam("maxRoll")->value().toFloat();
-  if (request->hasParam("maxPitch"))
-    maxPitch = request->getParam("maxPitch")->value().toFloat();
-  if (request->hasParam("maxYaw"))
-    maxYaw = request->getParam("maxYaw")->value().toFloat();
-  if (request->hasParam("maxMotor"))
-    maxMotor = request->getParam("maxMotor")->value().toFloat();
-  if (request->hasParam("Kp_range"))
-    Kp_range = request->getParam("Kp_range")->value().toFloat();
-  if (request->hasParam("Kd_range"))
-    Kd_range = request->getParam("Kd_range")->value().toFloat();
-  if (request->hasParam("Kp_roll_angle"))
-    Kp_roll_angle = request->getParam("Kp_roll_angle")->value().toFloat();
-  if (request->hasParam("Ki_roll_angle"))
-    Ki_roll_angle = request->getParam("Ki_roll_angle")->value().toFloat();
-  if (request->hasParam("Kd_roll_angle"))
-    Kd_roll_angle = request->getParam("Kd_roll_angle")->value().toFloat();
-  if (request->hasParam("Kp_pitch_angle"))
-    Kp_pitch_angle = request->getParam("Kp_pitch_angle")->value().toFloat();
-  if (request->hasParam("Ki_pitch_angle"))
-    Ki_pitch_angle = request->getParam("Ki_pitch_angle")->value().toFloat();
-  if (request->hasParam("Kd_pitch_angle"))
-    Kd_pitch_angle = request->getParam("Kd_pitch_angle")->value().toFloat();
-  if (request->hasParam("Kp_yaw"))
-    Kp_yaw = request->getParam("Kp_yaw")->value().toFloat();
-  if (request->hasParam("Ki_yaw"))
-    Ki_yaw = request->getParam("Ki_yaw")->value().toFloat();
-  if (request->hasParam("Kd_yaw"))
-    Kd_yaw = request->getParam("Kd_yaw")->value().toFloat();
-  if (request->hasParam("morter1_buffer"))
-    morter1_buffer = request->getParam("morter1_buffer")->value().toInt();
-  if (request->hasParam("morter2_buffer"))
-    morter2_buffer = request->getParam("morter2_buffer")->value().toInt();
-  if (request->hasParam("morter3_buffer"))
-    morter3_buffer = request->getParam("morter3_buffer")->value().toInt();
-  if (request->hasParam("morter4_buffer"))
-    morter4_buffer = request->getParam("morter4_buffer")->value().toInt();
-
-  request->send(200, "text/plain", "Settings updated successfully");
-}
-
 void setup()
 {
   Serial.begin(115200);
@@ -755,9 +420,6 @@ void setup()
   // ピンモードを設定
   pinMode(ledPin1, OUTPUT);
   pinMode(ledPin2, OUTPUT);
-  // 初期ステータスを設定
-  currentStatus = All_On;
-  // setLedPattern(currentStatus);
 
   // レシーバー
   pinMode(PPM_PIN, INPUT_PULLUP);                 // ピンを入力モードに設定
@@ -776,10 +438,8 @@ void setup()
   Serial.println("MPU6050接続成功！");
   AcceleroMeterAngleSetup();
 
-  // Madgwickフィルタの初期化
   MadgwickFilter.begin(50);
 
-  // 各モーターをピンにアタッチ
   ESC1.attach(m1Pin);
   ESC2.attach(m2Pin);
   ESC3.attach(m3Pin);
@@ -788,67 +448,15 @@ void setup()
   Serial.println("PWM successfully attached to all motors");
 
   calibrateESCs();
-
-  // SPIFFSの初期化
-  if (!SPIFFS.begin(true))
-  {
-    Serial.println("An error has occurred while mounting SPIFFS");
-    return;
-  }
-  Serial.println("SPIFFS mounted successfully");
-
-  // Wi-Fi接続試行回数を制限
-  WiFi.begin(ssid, password);
-  int maxRetries = 3; // 最大リトライ回数
-  int retryCount = 0;
-
-  while (WiFi.status() != WL_CONNECTED && retryCount < maxRetries)
-  {
-    delay(1000);
-    Serial.println("Connecting to WiFi...");
-    retryCount++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    Serial.println("Connected to WiFi");
-    Serial.println(WiFi.localIP());
-    WiFi.printDiag(Serial);
-  }
-  else
-  {
-    Serial.println("Failed to connect to WiFi. Proceeding without WiFi.");
-  }
-
-  // サーバーのエンドポイントを設定
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-            { request->send(SPIFFS, "/index.html", "text/html"); });
-  server.on("/get", HTTP_GET, [](AsyncWebServerRequest *request)
-            { request->send(200, "text/plain", "GET Settings"); });
-  server.on("/set", HTTP_GET, [](AsyncWebServerRequest *request)
-            { request->send(200, "text/plain", "SET Settings"); });
-
-  // サーバー開始
-  server.begin();
-  Serial.println("HTTP server started");
 }
 
 void loop()
 {
-
-  // 現在のステータスに応じてLEDパターンを変更
-  // setLedPattern(currentStatus);
   currentMillis = millis();
 
   if (currentMillis - previousMillis > 0)
   {
-    // Calculate the frame rate in frames per second (FPS)
     frameRate = 1000.0 / (currentMillis - previousMillis);
-
-    // Print the frame rate to the serial monitor
-    // Serial.println(frameRate);
-
-    // Update previousMillis for the next loop
     previousMillis = currentMillis;
   }
 
@@ -870,10 +478,10 @@ void loopDrone()
   // printAcc();
   // printGyro();
   // printRollPitchYaw();
-   printPIDoutput();
+  printPIDoutput();
   // printYawPID();
   // printRollPID();
-   //printDes();
+  // printDes();
   // printMotorCommands();
   // ShowGyro();
 }
@@ -888,13 +496,12 @@ int getChannelValue(int channelIndex)
   {
     Serial.print("Error: Invalid channel index ");
     Serial.println(channelIndex);
-    return 0; // 無効なインデックスの場合はデフォルト値を返す
+    return 0;
   }
 }
 
 void showRecievedData()
 {
-  // 各チャネルの値をシリアルモニターに表示
   Serial.print("Channel values: ");
   for (int i = 0; i < CHANNELS; i++)
   {
@@ -911,13 +518,10 @@ void getIMUdata()
 {
   AcceleroMeterWireRead();
   calcRotation();
-
-  // ジャイロデータをラジアン毎秒に変換
   gx_for_Madgwick = dpsX * DEG_TO_RAD;
   gy_for_Madgwick = dpsY * DEG_TO_RAD;
   gz_for_Madgwick = dpsZ * DEG_TO_RAD;
 
-  // 加速度データの正規化
   float norm = sqrt(AccX * AccX + AccY * AccY + AccZ * AccZ);
   if (norm != 0)
   {
@@ -1003,7 +607,6 @@ void PIDControlCalcs()
   yaw_PID = yaw_Weight * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw);
   yaw_PID = constrain(yaw_PID, -PID_Limit, PID_Limit);
 
-  // Update roll variables
   integral_roll_prev = integral_roll;
   integral_pitch_prev = integral_pitch;
   error_yaw_prev = error_yaw;
@@ -1012,9 +615,6 @@ void PIDControlCalcs()
 
 void controlMixer()
 {
-  // DESCRIPTION: Mixes scaled commands from PID controller to actuator outputs based on vehicle configuration
-
-  // Quad mixing. maxMotor is used to keep the motors from being too violent if you have a big battery and concers about that.
   m1_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (-pitch_PID + roll_PID + yaw_PID);
   m2_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (-pitch_PID - roll_PID - yaw_PID);
   m3_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (pitch_PID - roll_PID + yaw_PID);
@@ -1028,8 +628,6 @@ void controlMixer()
 
 void scaleCommands()
 {
-  // DESCRIPTION: Scale normalized actuator commands to values for ESC protocol
-  // Scale to Servo PWM 0-180 degrees for stop to full speed.  No need to constrain since mx_command_scaled already is.
   m1_command_PWM = m1_command_scaled * throttle_max;
   m2_command_PWM = m2_command_scaled * throttle_max;
   m3_command_PWM = m3_command_scaled * throttle_max;
@@ -1038,7 +636,6 @@ void scaleCommands()
 
 void getRadioSticks()
 {
-  // 各PWM入力値を channelValues 配列から割り当て
   PWM_throttle = getChannelValue(2);
   PWM_roll = getChannelValue(0);
   PWM_Elevation = getChannelValue(1);
@@ -1071,25 +668,21 @@ void getRadioSticks()
 
 void commandMotors()
 {
-  // ベーススロットル値を追加
   m1_command_PWM += throttle_min;
   m2_command_PWM += throttle_min;
   m3_command_PWM += throttle_min;
   m4_command_PWM += throttle_min;
 
-  // 各モーターのバッファ値を追加
   m1_command_PWM += morter1_buffer;
   m2_command_PWM += morter2_buffer;
   m3_command_PWM += morter3_buffer;
   m4_command_PWM += morter4_buffer;
 
-  // PWM値を範囲内に制限
   m1_command_PWM = constrain(m1_command_PWM, throttle_min, throttle_max);
   m2_command_PWM = constrain(m2_command_PWM, throttle_min, throttle_max);
   m3_command_PWM = constrain(m3_command_PWM, throttle_min, throttle_max);
   m4_command_PWM = constrain(m4_command_PWM, throttle_min, throttle_max);
 
-  // スロットルが0の場合モーターを回さないようにする
   if (thro_des == 0 && zero_throttle_safty && !keep_rotating)
   {
     m1_command_PWM = throttle_min;
@@ -1100,7 +693,6 @@ void commandMotors()
     Serial.println("motor stop");
   }
 
-  // もしプロポとの通信が切れた場合モーターを停止する
   bool allZero = true;
   // チャンネル値をチェック
   for (int i = 0; i < CHANNELS; i++)
@@ -1120,25 +712,19 @@ void commandMotors()
 
     // Serial.println("All channels are zero. Setting PWM to throttle_min.");
   }
-
-  // モーターにPWMを設定
   setMotorPWM(m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM, false);
 }
 
 void calibrateESCs()
 {
   Serial.println("Starting calibration");
-
   setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min, true);
   Serial.println("Setting maximum throttle");
   delay(2000);
-  currentStatus = Flash;
-  // setLedPattern(currentStatus);
   Serial.println("Setting minimum throttle");
   delay(2000);
 }
 
-// モーターPWM信号を設定する関数
 void setMotorPWM(int m1, int m2, int m3, int m4, bool cal)
 {
   int duty1 = 0, duty2 = 0, duty3 = 0, duty4 = 0;
@@ -1158,7 +744,6 @@ void setMotorPWM(int m1, int m2, int m3, int m4, bool cal)
     duty4 = constrain(m4, throttle_min, throttle_max);
   }
 
-  // 修正: PWMチャネル (0～3) を指定
   ESC1.writeMicroseconds(duty1);
   ESC2.writeMicroseconds(duty2);
   ESC3.writeMicroseconds(duty3);
