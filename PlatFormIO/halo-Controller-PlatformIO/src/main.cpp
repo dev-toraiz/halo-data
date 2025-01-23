@@ -4,9 +4,6 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <ESP32Servo.h>
-#include <WiFi.h>
-#include <ESPAsyncWebServer.h>
-#include <SPIFFS.h>
 
 // SDA（データライン）: GPIO21
 // SCL（クロックライン）: GPIO22
@@ -24,6 +21,7 @@ volatile unsigned long lastPulseTime = 0;   // 前回のパルス時間
 volatile int channelValues[CHANNELS] = {0}; // 各チャネルの値を格納
 volatile int currentChannel = 0;            // 現在のチャネルインデックス
 
+// The LOOP_TIMING is based on the IMU.  For the Arduino_LSM6DSOX, it is 104Hz.  So, the loop time is set a little longer so the IMU has time to update from the control change.
 #define LOOP_TIMING 100
 
 // モーターピン定義
@@ -42,10 +40,10 @@ const int throttle_min = 1000; // 最小PWM
 
 const float throttle_limit = 0.9;
 
-int morter1_buffer = 0;   // RL
-int morter2_buffer = 320; // RR
-int morter3_buffer = 170; // FR
-int morter4_buffer = 0;   // FL
+int morter1_buffer = 0; // RL
+int morter2_buffer = 0; // RR
+int morter3_buffer = 0; // FR
+int morter4_buffer = 0; // FL
 
 // madgwick
 float B_madgwick = 0.04; //(default 0.04)
@@ -55,36 +53,35 @@ float q2 = 0.0f;
 float q3 = 0.0f;
 
 // Controller parameters (this is where you "tune it".  It's best to use the WiFi interface to do it live and then update once its tuned.):
-float i_limit = 20;    // Integrator saturation level, mostly for safety (default 25.0)
-float maxRoll = 14.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxPitch = 14.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxYaw = 160.0;  // Max yaw rate in deg/sec (default 160.0)
-float maxMotor = 0.7;
-float Kp_range = 20;
-float Kd_range = 5;
+float i_limit = 25;    // Integrator saturation level, mostly for safety (default 25.0)
+float maxRoll = 20.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxPitch = 20.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxYaw = 140.0;  // Max yaw rate in deg/sec (default 160.0)
+float throttle_Limit = 1800;
 
 float hoverRoll = 0; //-1 to 1
-float hoverPitch = 0.1;
-float hoverYaw = 0.1;
+float hoverPitch = 0;
+float hoverYaw = 0;
 
-float parameter_rate = 1;
+float parameter_rate = 1.0;
 
-float PID_Adjuster = 0.72;
+float PID_Adjuster = 1;
+float PID_Limit = 0.20;
 
-float Kp_roll_angle = 2.3 * parameter_rate;  // Roll P-gain
-float Ki_roll_angle = 0.01 * parameter_rate; // Roll I-gain
-float Kd_roll_angle = 1.3 * parameter_rate;  // Roll D-gain
+float Kp_roll_angle = 6 * parameter_rate;   // Roll P-gain
+float Ki_roll_angle = 0.0 * parameter_rate; // Roll I-gain
+float Kd_roll_angle = 0 * parameter_rate;   // Roll D-gain
 
-float Kp_pitch_angle = 2.3 * parameter_rate;  // Pitch P-gain
-float Ki_pitch_angle = 0.01 * parameter_rate; // Pitch I-gain
-float Kd_pitch_angle = 1.3 * parameter_rate;  // Pitch D-gain
+float Kp_pitch_angle = Kp_roll_angle; // Pitch P-gain
+float Ki_pitch_angle = Ki_roll_angle; // Pitch I-gain
+float Kd_pitch_angle = Kd_roll_angle; // Pitch D-gain
 
-float Kp_yaw = 10;   // Yaw P-gain default 30
-float Ki_yaw = .1;   // Yaw I-gain default 5
-float Kd_yaw = .015; // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)
+float Kp_yaw = 20; // Yaw P-gain default 30
+float Ki_yaw = 0;  // Yaw I-gain default 5
+float Kd_yaw = 1;  // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)
 
-float Roll_ProportionalBand = 16;  // deg
-float Pitch_ProportionalBand = 16; // deg
+float Roll_ProportionalBand = 30;  // deg
+float Pitch_ProportionalBand = 30; // deg
 float Yaw_ProportionalBand = 30;   // deg
 
 float Out_ProportionalBand_Roll, Out_ProportionalBand_Pitch;
@@ -113,11 +110,11 @@ float rollPIDError = -0.00;
 float pitchPIDError = 0.00;
 
 float roll_Weight = 0.001, pitch_Weight = 0.001, yaw_Weight = 0.0001;
-float PID_Limit = 0.24;
 
 float min_rotation = 200;
 float keep_rotating = false;
 float zero_throttle_safty = true;
+bool emergency;
 
 int MPU6050_ADDR = 0x68;
 int16_t raw_acc_x, raw_acc_y, raw_acc_z, raw_t, raw_gyro_x, raw_gyro_y, raw_gyro_z;
@@ -182,6 +179,7 @@ void printYawPID();
 void printRollPID();
 void showRecievedData();
 
+// 割り込み関数
 void IRAM_ATTR ppmInterrupt()
 {
   unsigned long pulseTime = micros();                   // 現在の時間を取得
@@ -189,8 +187,8 @@ void IRAM_ATTR ppmInterrupt()
   lastPulseTime = pulseTime;
 
   if (pulseWidth > SYNC_GAP)
-  {                   
-    currentChannel = 0; 
+  {                     // 同期信号を検出
+    currentChannel = 0; // チャネルをリセット
   }
   else
   {
@@ -417,9 +415,13 @@ void setup()
 {
   Serial.begin(115200);
 
+  emergency = false;
+
   // ピンモードを設定
   pinMode(ledPin1, OUTPUT);
   pinMode(ledPin2, OUTPUT);
+  digitalWrite(ledPin1, HIGH);
+  digitalWrite(ledPin2, HIGH);
 
   // レシーバー
   pinMode(PPM_PIN, INPUT_PULLUP);                 // ピンを入力モードに設定
@@ -438,8 +440,10 @@ void setup()
   Serial.println("MPU6050接続成功！");
   AcceleroMeterAngleSetup();
 
-  MadgwickFilter.begin(50);
+  // Madgwickフィルタの初期化
+  MadgwickFilter.begin(100);
 
+  // 各モーターをピンにアタッチ
   ESC1.attach(m1Pin);
   ESC2.attach(m2Pin);
   ESC3.attach(m3Pin);
@@ -452,10 +456,13 @@ void setup()
 
 void loop()
 {
+
   currentMillis = millis();
 
   if (currentMillis - previousMillis > 0)
   {
+    deltaTime = currentMillis - previousMillis;
+    // Calculate the frame rate in frames per second (FPS)
     frameRate = 1000.0 / (currentMillis - previousMillis);
     previousMillis = currentMillis;
   }
@@ -478,9 +485,9 @@ void loopDrone()
   // printAcc();
   // printGyro();
   // printRollPitchYaw();
-  printPIDoutput();
+  //  printPIDoutput();
   // printYawPID();
-  // printRollPID();
+   printRollPID();
   // printDes();
   // printMotorCommands();
   // ShowGyro();
@@ -496,12 +503,13 @@ int getChannelValue(int channelIndex)
   {
     Serial.print("Error: Invalid channel index ");
     Serial.println(channelIndex);
-    return 0;
+    return 0; // 無効なインデックスの場合はデフォルト値を返す
   }
 }
 
 void showRecievedData()
 {
+  // 各チャネルの値をシリアルモニターに表示
   Serial.print("Channel values: ");
   for (int i = 0; i < CHANNELS; i++)
   {
@@ -518,10 +526,13 @@ void getIMUdata()
 {
   AcceleroMeterWireRead();
   calcRotation();
+
+  // ジャイロデータをラジアン毎秒に変換
   gx_for_Madgwick = dpsX * DEG_TO_RAD;
   gy_for_Madgwick = dpsY * DEG_TO_RAD;
   gz_for_Madgwick = dpsZ * DEG_TO_RAD;
 
+  // 加速度データの正規化
   float norm = sqrt(AccX * AccX + AccY * AccY + AccZ * AccZ);
   if (norm != 0)
   {
@@ -538,6 +549,11 @@ void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az)
   roll_IMU = -(MadgwickFilter.getRoll() - init_angleX);
   pitch_IMU = MadgwickFilter.getPitch() - init_angleY;
   yaw_IMU = GyroZ;
+
+  if (abs(roll_IMU) >= 40 || abs(pitch_IMU) >= 40)
+  {
+    emergency = true;
+  }
 }
 
 void getDesiredAnglesAndThrottle()
@@ -560,8 +576,8 @@ void PIDControlCalcs()
   // Roll
   error_roll = roll_des - roll_IMU;
   integral_roll = integral_roll_prev + error_roll * deltaTime;
-  integral_roll = constrain(integral_roll, -i_limit, i_limit); // Limit integrator to prevent saturating
-  derivative_roll = -(dpsX - init_dpsX);
+  integral_roll = constrain(integral_roll, -i_limit, i_limit);         // Limit integrator to prevent saturating
+  derivative_roll = (error_roll - error_roll_prev) * 1000 / deltaTime; // deg/sec
   roll_PID = roll_Weight * (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll - Kd_roll_angle * derivative_roll);
   roll_PID -= rollPIDError;
   roll_PID = constrain(roll_PID, -PID_Limit, PID_Limit);
@@ -582,7 +598,7 @@ void PIDControlCalcs()
   error_pitch = pitch_des - pitch_IMU;
   integral_pitch = integral_pitch_prev + error_pitch * deltaTime;
   integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
-  derivative_pitch = dpsY - init_dpsY;
+  derivative_pitch = (error_pitch - error_pitch_prev) * 1000 / deltaTime;
   pitch_PID = pitch_Weight * (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch - Kd_pitch_angle * derivative_pitch);
   pitch_PID -= pitchPIDError;
   pitch_PID = constrain(pitch_PID, -PID_Limit, PID_Limit);
@@ -603,22 +619,25 @@ void PIDControlCalcs()
   error_yaw = yaw_des - (dpsZ - init_dpsZ);
   integral_yaw = integral_yaw_prev + error_yaw * deltaTime;
   integral_yaw = constrain(integral_yaw, -i_limit, i_limit);
-  derivative_yaw = -(dpsZ - init_dpsZ);
+  derivative_yaw = -(error_yaw - error_yaw_prev) * 1000 / deltaTime;
   yaw_PID = yaw_Weight * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw);
   yaw_PID = constrain(yaw_PID, -PID_Limit, PID_Limit);
 
+  // Update roll variables
   integral_roll_prev = integral_roll;
   integral_pitch_prev = integral_pitch;
   error_yaw_prev = error_yaw;
+  error_pitch_prev = error_pitch;
+  error_roll_prev = error_roll;
   integral_yaw_prev = integral_yaw;
 }
 
 void controlMixer()
 {
-  m1_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (-pitch_PID + roll_PID + yaw_PID);
-  m2_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (-pitch_PID - roll_PID - yaw_PID);
-  m3_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (pitch_PID - roll_PID + yaw_PID);
-  m4_command_scaled = maxMotor * (thro_des) + PID_Adjuster * (pitch_PID + roll_PID - yaw_PID);
+  m1_command_scaled = (thro_des) + PID_Adjuster * (-pitch_PID + roll_PID + yaw_PID);
+  m2_command_scaled = (thro_des) + PID_Adjuster * (-pitch_PID - roll_PID - yaw_PID);
+  m3_command_scaled = (thro_des) + PID_Adjuster * (pitch_PID - roll_PID + yaw_PID);
+  m4_command_scaled = (thro_des) + PID_Adjuster * (pitch_PID + roll_PID - yaw_PID);
 
   m1_command_scaled = constrain(m1_command_scaled, 0, 1.0);
   m2_command_scaled = constrain(m2_command_scaled, 0, 1.0);
@@ -628,6 +647,8 @@ void controlMixer()
 
 void scaleCommands()
 {
+  // DESCRIPTION: Scale normalized actuator commands to values for ESC protocol
+  // Scale to Servo PWM 0-180 degrees for stop to full speed.  No need to constrain since mx_command_scaled already is.
   m1_command_PWM = m1_command_scaled * throttle_max;
   m2_command_PWM = m2_command_scaled * throttle_max;
   m3_command_PWM = m3_command_scaled * throttle_max;
@@ -636,6 +657,7 @@ void scaleCommands()
 
 void getRadioSticks()
 {
+  // 各PWM入力値を channelValues 配列から割り当て
   PWM_throttle = getChannelValue(2);
   PWM_roll = getChannelValue(0);
   PWM_Elevation = getChannelValue(1);
@@ -668,31 +690,34 @@ void getRadioSticks()
 
 void commandMotors()
 {
+  // ベーススロットル値を追加
   m1_command_PWM += throttle_min;
   m2_command_PWM += throttle_min;
   m3_command_PWM += throttle_min;
   m4_command_PWM += throttle_min;
 
+  // 各モーターのバッファ値を追加
   m1_command_PWM += morter1_buffer;
   m2_command_PWM += morter2_buffer;
   m3_command_PWM += morter3_buffer;
   m4_command_PWM += morter4_buffer;
 
-  m1_command_PWM = constrain(m1_command_PWM, throttle_min, throttle_max);
-  m2_command_PWM = constrain(m2_command_PWM, throttle_min, throttle_max);
-  m3_command_PWM = constrain(m3_command_PWM, throttle_min, throttle_max);
-  m4_command_PWM = constrain(m4_command_PWM, throttle_min, throttle_max);
+  // PWM値を範囲内に制限
+  m1_command_PWM = constrain(m1_command_PWM, throttle_min, throttle_Limit);
+  m2_command_PWM = constrain(m2_command_PWM, throttle_min, throttle_Limit);
+  m3_command_PWM = constrain(m3_command_PWM, throttle_min, throttle_Limit);
+  m4_command_PWM = constrain(m4_command_PWM, throttle_min, throttle_Limit);
 
-  if (thro_des == 0 && zero_throttle_safty && !keep_rotating)
+  // スロットルが0の場合モーターを回さないようにする
+  if (thro_des <= 0.02 && zero_throttle_safty && !keep_rotating)
   {
     m1_command_PWM = throttle_min;
     m2_command_PWM = throttle_min;
     m3_command_PWM = throttle_min;
     m4_command_PWM = throttle_min;
-
-    Serial.println("motor stop");
   }
 
+  // もしプロポとの通信が切れた場合モーターを停止する
   bool allZero = true;
   // チャンネル値をチェック
   for (int i = 0; i < CHANNELS; i++)
@@ -712,12 +737,15 @@ void commandMotors()
 
     // Serial.println("All channels are zero. Setting PWM to throttle_min.");
   }
+
+  // モーターにPWMを設定
   setMotorPWM(m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM, false);
 }
 
 void calibrateESCs()
 {
   Serial.println("Starting calibration");
+
   setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min, true);
   Serial.println("Setting maximum throttle");
   delay(2000);
@@ -744,10 +772,20 @@ void setMotorPWM(int m1, int m2, int m3, int m4, bool cal)
     duty4 = constrain(m4, throttle_min, throttle_max);
   }
 
-  ESC1.writeMicroseconds(duty1);
-  ESC2.writeMicroseconds(duty2);
-  ESC3.writeMicroseconds(duty3);
-  ESC4.writeMicroseconds(duty4);
+  if (emergency)
+  {
+    ESC1.writeMicroseconds(throttle_min);
+    ESC2.writeMicroseconds(throttle_min);
+    ESC3.writeMicroseconds(throttle_min);
+    ESC4.writeMicroseconds(throttle_min);
+  }
+  else
+  {
+    ESC1.writeMicroseconds(duty1);
+    ESC2.writeMicroseconds(duty2);
+    ESC3.writeMicroseconds(duty3);
+    ESC4.writeMicroseconds(duty4);
+  }
 }
 
 void printRollPitchYaw()
@@ -801,18 +839,21 @@ void printGyro()
 void printMotorCommands()
 {
   Serial.print(F("m1_command: "));
-
+  Serial.print(m1_command_PWM);
   Serial.print(F("  : "));
   Serial.print(m1_command_scaled);
-  Serial.print(F(" m2_command: "));
+
+  Serial.print(F("   m2_command: "));
   Serial.print(m2_command_PWM);
   Serial.print(F("  : "));
   Serial.print(m2_command_scaled);
-  Serial.print(F(" m3_command: "));
+
+  Serial.print(F("   m3_command: "));
   Serial.print(m3_command_PWM);
-  Serial.print(F("  : "));
+  Serial.print(F("  :  "));
   Serial.print(m3_command_scaled);
-  Serial.print(F(" m4_command: "));
+  Serial.print(F("   m4_command: "));
+
   Serial.println(m4_command_PWM);
   Serial.print(F("  : "));
   Serial.print(m4_command_scaled);
