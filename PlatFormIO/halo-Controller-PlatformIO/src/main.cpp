@@ -483,7 +483,7 @@ void loopDrone()
   getRadioSticks();                                                                  // Gets the PWM from the radio receiver
 
   // printAcc();
-  // printGyro();
+  //printGyro();
   // printRollPitchYaw();
   //  printPIDoutput();
   // printYawPID();
@@ -546,8 +546,10 @@ void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az)
 {
   MadgwickFilter.updateIMU(gx, gy, gz, ax, ay, az);
 
-  roll_IMU = -(MadgwickFilter.getRoll() - init_angleX);
-  pitch_IMU = MadgwickFilter.getPitch() - init_angleY;
+  // roll_IMU = -(MadgwickFilter.getRoll() - init_angleX);
+  // pitch_IMU = MadgwickFilter.getPitch() - init_angleY;
+  roll_IMU = GyroX;
+  pitch_IMU = GyroY;
   yaw_IMU = GyroZ;
 
   if (abs(roll_IMU) >= 40 || abs(pitch_IMU) >= 40)
@@ -572,6 +574,7 @@ void getDesiredAnglesAndThrottle()
 
 void PIDControlCalcs()
 {
+  
 
   // Roll
   error_roll = roll_des - roll_IMU;
