@@ -608,7 +608,7 @@ void PIDControlCalcs()
   integral_roll = integral_roll_prev + error_roll * deltaTime;
   integral_roll = constrain(integral_roll, -i_limit, i_limit);  // Limit integrator to prevent saturating
   derivative_roll = (error_roll - error_roll_prev) / deltaTime; // deg/sec
-  derivative_roll = alpha_derivative * derivative_roll + (1.0 - alpha_des) * derivative_roll_pre;
+  derivative_roll = alpha_derivative * derivative_roll + (1.0 - alpha_derivative) * derivative_roll_pre;
   derivative_roll_pre = derivative_roll;
 
   roll_PID = (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll + Kd_roll_angle * derivative_roll);
@@ -632,7 +632,7 @@ void PIDControlCalcs()
   integral_pitch = integral_pitch_prev + error_pitch * deltaTime;
   integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
   derivative_pitch = (error_pitch - error_pitch_prev) / deltaTime;
-  derivative_pitch = alpha_derivative * derivative_pitch + (1.0 - alpha_des) * derivative_pitch_pre;
+  derivative_pitch = alpha_derivative * derivative_pitch + (1.0 - alpha_derivative) * derivative_pitch_pre;
   derivative_pitch_pre = derivative_pitch;
   pitch_PID = (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch + Kd_pitch_angle * derivative_pitch);
   pitch_PID -= pitchPIDError;
