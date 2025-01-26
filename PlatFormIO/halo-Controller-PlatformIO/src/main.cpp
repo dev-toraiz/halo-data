@@ -119,6 +119,17 @@ float keep_rotating = false;
 float zero_throttle_safty = true;
 bool emergency;
 
+const float alpha = 0.70; // 相補性フィルターの係数
+
+float alpha_des = 0.15;
+float thro_pre = 0.0;
+float roll_pre = 0.0;
+float pitch_pre = 0.0;
+float yaw_pre = 0.0;
+
+float alpha_derivative = 0.1;
+float derivative_roll_pre, derivative_pitch_pre, derivative_yaw_pre;
+
 int MPU6050_ADDR = 0x68;
 int16_t raw_acc_x, raw_acc_y, raw_acc_z, raw_t, raw_gyro_x, raw_gyro_y, raw_gyro_z;
 float acc_angle_x, acc_angle_y;
