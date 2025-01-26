@@ -58,12 +58,12 @@ float hoverYaw = 0;
 
 float parameter_rate = 1.0;
 
-float PID_Adjuster = 0.7;
+float PID_Adjuster = 1;
 float PID_Limit = 0.16;
 
-float Kp_roll_angle = 1.1 * parameter_rate; // Roll P-gain
-float Ki_roll_angle = 0.9 * parameter_rate; // Roll I-gain
-float Kd_roll_angle =0.8* parameter_rate;   // Roll D-gain2
+float Kp_roll_angle = 0.26* parameter_rate; // Roll P-gain
+float Ki_roll_angle = 0.01* parameter_rate; // Roll I-gain0.9
+float Kd_roll_angle =0.050* parameter_rate;   // Roll D-gain2
 
 float Kp_pitch_angle = Kp_roll_angle; // Pitch P-gain
 float Ki_pitch_angle = Ki_roll_angle; // Pitch I-gain
