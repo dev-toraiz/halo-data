@@ -68,7 +68,7 @@ float Kd_roll_angle = 0 * parameter_rate;   // Roll D-gain
 
 float Kp_pitch_angle = Kp_roll_angle; // Pitch P-gain
 float Ki_pitch_angle = Ki_roll_angle; // Pitch I-gain
-float Kd_pitch_angle = Kd_roll_angle; // Pitch D-gain
+float Kd_pitch_angle = Kd_pitch_angle; // Pitch D-gain
 
 float roll_Weight = 1, pitch_Weight = 1, yaw_Weight = 0.0001;
 
@@ -119,7 +119,7 @@ float keep_rotating = false;
 float zero_throttle_safty = true;
 bool emergency;
 
-const float alpha = 0.70; // 相補性フィルターの係数
+const float alpha = 0.50; // 相補性フィルターの係数
 
 float alpha_des = 0.15;
 float thro_pre = 0.0;
@@ -152,9 +152,10 @@ float gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick;
 float thro_des, roll_des, pitch_des, yaw_des;
 
 // Controller:
-float error_roll, error_roll_prev, roll_des_prev, integral_roll, integral_roll_il, integral_roll_ol, integral_roll_prev, integral_roll_prev_il, integral_roll_prev_ol, derivative_roll, roll_PID = 0;
-float error_pitch, error_pitch_prev, pitch_des_prev, integral_pitch, integral_pitch_il, integral_pitch_ol, integral_pitch_prev, integral_pitch_prev_il, integral_pitch_prev_ol, derivative_pitch, pitch_PID = 0;
-float error_yaw, error_yaw_prev, integral_yaw, integral_yaw_prev, derivative_yaw, yaw_PID = 0;
+float error_roll, error_roll_prev, roll_des_prev, integral_roll, integral_roll_il, integral_roll_ol, integral_roll_prev, integral_roll_prev_il, integral_roll_prev_ol, derivative_roll;
+float error_pitch, error_pitch_prev, pitch_des_prev, integral_pitch, integral_pitch_il, integral_pitch_ol, integral_pitch_prev, integral_pitch_prev_il, integral_pitch_prev_ol, derivative_pitch;
+float error_yaw, error_yaw_prev, integral_yaw, integral_yaw_prev, derivative_yaw;
+double roll_PID, pitch_PID, yaw_PID;
 
 // Mixer
 float m1_command_scaled, m2_command_scaled, m3_command_scaled, m4_command_scaled;
@@ -173,7 +174,6 @@ void loopDrone();
 void showRecievedData();
 void getIMUdata();
 void ComplementaryFilter();
-void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az);
 void getDesiredAnglesAndThrottle();
 void PIDControlCalcs();
 void controlMixer();
@@ -472,7 +472,7 @@ void loop()
 
   if (currentMillis - previousMillis > 0)
   {
-    deltaTime = currentMillis - previousMillis;
+    deltaTime = (currentMillis - previousMillis) / 1000.0;
     // Calculate the frame rate in frames per second (FPS)
     frameRate = 1000.0 / (currentMillis - previousMillis);
     previousMillis = currentMillis;
@@ -486,7 +486,6 @@ void loopDrone()
   // showRecievedData();
   getIMUdata();   
   ComplementaryFilter();                                                     
-  //Madgwick6DOF(gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick, AccX, AccY, AccZ); // Updates roll_IMU, pitch_IMU, and yaw_IMU angle estimates (degrees)
   getDesiredAnglesAndThrottle();                                                     // Convert raw commands to normalized values based on saturated control limits
   PIDControlCalcs();                                                                 // The PID functions. Stabilize on angle setpoint from getDesiredAnglesAndThrottle
   controlMixer();                                                                    // Mixes PID outputs to scaled actuator commands -- custom mixing assignments done here
@@ -499,7 +498,7 @@ void loopDrone()
   // printRollPitchYaw();
   //  printPIDoutput();
   // printYawPID();
-  // printRollPID();
+ // printRollPID();
   // printDes();
   // printMotorCommands();
   // ShowGyro();
@@ -560,17 +559,6 @@ void ComplementaryFilter()
   roll_IMU = alpha * (roll_IMU + dpsX * deltaTime) + (1 - alpha) * GyroX;
   pitch_IMU = alpha * (pitch_IMU + dpsY * deltaTime) + (1 - alpha) * GyroY;
   yaw_IMU = alpha * (yaw_IMU + dpsZ * deltaTime) + (1 - alpha) * GyroZ;
-}
-
-void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az)
-{
-  MadgwickFilter.updateIMU(gx, gy, gz, ax, ay, az);
-
-   roll_IMU = -(MadgwickFilter.getRoll() - init_angleX);
-   pitch_IMU = MadgwickFilter.getPitch() - init_angleY;
- // roll_IMU = GyroX;
- // pitch_IMU = GyroY;
-  yaw_IMU = GyroZ;
 
   if (abs(roll_IMU) >= 40 || abs(pitch_IMU) >= 40)
   {
@@ -578,12 +566,26 @@ void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az)
   }
 }
 
+
 void getDesiredAnglesAndThrottle()
 {
-  thro_des = (PWM_throttle - 1000.0) / 1000.0;     // Between 0 and 1
-  roll_des = (PWM_roll - 1500.0) / 500.0;          // Between -1 and 1
-  pitch_des = -((PWM_Elevation - 1500.0) / 500.0); // Between -1 and 1
-  yaw_des = -(PWM_Rudd - 1500.0) / 500.0;          // Between -1 and 1
+
+  // 入力PWM値から計算された目標値
+  thro_des = (PWM_throttle - 1000.0) / 1000.0;
+  roll_des = (PWM_roll - 1500.0) / 500.0;
+  pitch_des = -((PWM_Elevation - 1500.0) / 500.0);
+  yaw_des = -(PWM_Rudd - 1500.0) / 500.0;
+
+  // ローパスフィルター適用
+  thro_des = alpha_des * thro_des + (1.0 - alpha_des) * thro_pre;
+  roll_des = alpha_des * roll_des + (1.0 - alpha_des) * roll_pre;
+  pitch_des = alpha_des * pitch_des + (1.0 - alpha_des) * pitch_pre;
+  yaw_des = alpha_des * yaw_des + (1.0 - alpha_des) * yaw_pre;
+
+  thro_pre = thro_des;
+  roll_pre = roll_des;
+  pitch_pre = pitch_des;
+  yaw_pre = yaw_des;
 
   // Constrain within normalized bounds
   thro_des = constrain(thro_des, 0.0, 1.0) * throttle_limit;           // Between 0 and 1
@@ -604,9 +606,13 @@ void PIDControlCalcs()
   roll_PID = constrain(roll_PID, -PID_Limit, PID_Limit);
 
   // Roll (inner loop)
-  error_roll_deg = roll_PID - (dpsX - init_dpsX);
+  error_roll_deg = roll_PID -(error_roll - error_roll_prev) / deltaTime;
+  error_roll_deg = alpha_derivative * error_roll_deg + (1.0 - alpha_des) *error_roll_prev_deg;
+
+
   integral_roll_deg = integral_roll_prev_deg + error_roll_deg * deltaTime;
   integral_roll_deg = constrain(integral_roll_deg, -i_limit_deg, i_limit_deg);
+
   derivative_roll_deg = (error_roll_deg - error_roll_prev_deg) * 1000 / deltaTime;
   roll_PID_deg = roll_Weight_deg * (Kp_roll_angle_deg * error_roll_deg + Ki_roll_angle_deg * integral_roll_deg - Kd_roll_angle_deg * derivative_roll_deg);
   roll_PID_deg = constrain(roll_PID_deg, -PID_Limit_deg, PID_Limit_deg);
@@ -626,12 +632,15 @@ void PIDControlCalcs()
   integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
   pitch_PID = pitch_Weight * (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch);
   pitch_PID -= pitchPIDError;
-  pitch_PID = constrain(pitch_PID, -PID_Limit, PID_Limit);
+  pitch_PID = constrain(pitch_PID, -PID_Limit / pitch_Weight, PID_Limit / pitch_Weight);
 
   // Pitch (inner loop)
-  error_pitch_deg = pitch_PID - (dpsY - init_dpsY);
+  error_pitch_deg = pitch_PID - (error_pitch - error_pitch_prev) / deltaTime;
+  error_pitch_deg = alpha_derivative * error_pitch_deg + (1.0 - alpha_des) * error_pitch_prev_deg;
+
   integral_pitch_deg = integral_pitch_prev_deg + error_pitch_deg * deltaTime;
   integral_pitch_deg = constrain(integral_pitch_deg, -i_limit_deg, i_limit_deg);
+
   derivative_pitch_deg = (error_pitch_deg - error_pitch_prev_deg) * 1000 / deltaTime;
   pitch_PID_deg = pitch_Weight_deg * (Kp_pitch_angle_deg * error_pitch_deg + Ki_pitch_angle_deg * integral_pitch_deg - Kd_pitch_angle_deg * derivative_pitch_deg);
   pitch_PID_deg = constrain(pitch_PID_deg, -PID_Limit_deg, PID_Limit_deg);
@@ -640,7 +649,9 @@ void PIDControlCalcs()
   error_yaw = yaw_des - (dpsZ - init_dpsZ);
   integral_yaw = integral_yaw_prev + error_yaw * deltaTime;
   integral_yaw = constrain(integral_yaw, -i_limit, i_limit);
-  derivative_yaw = -(error_yaw - error_yaw_prev) * 1000 / deltaTime;
+  derivative_yaw = -(error_yaw - error_yaw_prev) / deltaTime;
+  derivative_yaw = alpha_derivative * derivative_yaw + (1.0 - alpha_des) * derivative_yaw_pre;
+  derivative_yaw_pre = derivative_yaw;
   yaw_PID = yaw_Weight * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw);
   yaw_PID = constrain(yaw_PID, -PID_Limit, PID_Limit);
 
