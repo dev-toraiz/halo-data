@@ -59,12 +59,12 @@ float hoverYaw = 0;
 float parameter_rate = 1.0;
 
 float PID_Adjuster = 1;
-float PID_Limit = 360; // deg/sec
+float PID_Limit = 100; // deg/sec
 float PID_Limit_deg = 0.20;
 
-float Kp_roll_angle = 3.6 * parameter_rate; // Roll P-gain
-float Ki_roll_angle = 0.0 * parameter_rate; // Roll I-gain
-float Kd_roll_angle = 0 * parameter_rate;   // Roll D-gain
+float Kp_roll_angle = 3 * parameter_rate;    // Roll P-gain
+float Ki_roll_angle = 0.01 * parameter_rate; // Roll I-gain
+float Kd_roll_angle = 0 * parameter_rate;    // Roll D-gain
 
 float Kp_pitch_angle = Kp_roll_angle;  // Pitch P-gain
 float Ki_pitch_angle = Ki_roll_angle;  // Pitch I-gain
@@ -76,10 +76,10 @@ float error_roll_deg, integral_roll_deg, integral_roll_prev_deg, derivative_roll
 float error_pitch_deg, integral_pitch_deg, integral_pitch_prev_deg, derivative_pitch_deg, error_pitch_prev_deg, pitch_PID_deg;
 float pitch_Weight_deg, Kp_pitch_angle_deg, Ki_pitch_angle_deg, Kd_pitch_angle_deg;
 
-float roll_Weight_deg = pitch_Weight_deg = 0.001;
-float Kp_roll_angle_deg = Kp_pitch_angle_deg = 0.70;
-float Ki_roll_angle_deg = Ki_pitch_angle_deg = 0.001;
-float Kd_roll_angle_deg = Kd_pitch_angle_deg = 0.02;
+float roll_Weight_deg = pitch_Weight_deg = 0.0001;
+float Kp_roll_angle_deg = Kp_pitch_angle_deg = 3;
+float Ki_roll_angle_deg = Ki_pitch_angle_deg = 0.00;
+float Kd_roll_angle_deg = Kd_pitch_angle_deg = 0.0005;
 
 float Kp_yaw = 20; // Yaw P-gain default 30
 float Ki_yaw = 0;  // Yaw I-gain default 5
@@ -126,6 +126,9 @@ float thro_pre = 0.0;
 float roll_pre = 0.0;
 float pitch_pre = 0.0;
 float yaw_pre = 0.0;
+
+float alpha_PWM = 0.1;
+float m1_pre_PWM, m2_pre_PWM, m3_pre_PWM, m4_pre_PWM;
 
 float alpha_derivative = 0.1;
 float derivative_roll_pre, derivative_pitch_pre, derivative_yaw_pre;
@@ -500,7 +503,7 @@ void loopDrone()
   // printYawPID();
   // printRollPID();
   // printDes();
-  // printMotorCommands();
+  printMotorCommands();
   // ShowGyro();
 }
 
@@ -605,7 +608,7 @@ void PIDControlCalcs()
   roll_PID = constrain(roll_PID, -PID_Limit, PID_Limit);
 
   // Roll (inner loop)
-  derivative_roll = dpsX - init_dpsX;
+  derivative_roll = -(dpsX - init_dpsX);
   error_roll_deg = roll_PID - derivative_roll;
   error_roll_deg = alpha_derivative * error_roll_deg + (1.0 - alpha_derivative) * error_roll_prev_deg;
 
@@ -616,20 +619,30 @@ void PIDControlCalcs()
   roll_PID_deg = roll_Weight_deg * (Kp_roll_angle_deg * error_roll_deg + Ki_roll_angle_deg * integral_roll_deg - Kd_roll_angle_deg * derivative_roll_deg);
   roll_PID_deg = constrain(roll_PID_deg, -PID_Limit_deg, PID_Limit_deg);
 
-  Serial.print(F(" error_roll: "));
-  Serial.print(error_roll);
-  Serial.print(F(" derivative_roll: "));
-  if (derivative_roll >= 0)
-    Serial.print("+");
-  Serial.print(derivative_roll);
-  Serial.print(F(" roll_IMU: "));
-  Serial.print(roll_IMU);
-  Serial.print(F(" roll_PID: "));
-  Serial.print(roll_PID);
-  Serial.print(F(" error_roll_deg: "));
-  Serial.print(error_roll_deg);
-  Serial.print(F(" roll_PID_deg: "));
-  Serial.println(roll_PID_deg);
+  /* Serial.print(F(" error_roll: "));
+   if (error_roll >= 0)
+     Serial.print("+");
+   Serial.print(error_roll);
+   Serial.print(F(" roll_IMU: "));
+   if (roll_IMU >= 0)
+     Serial.print("+");
+   Serial.print(roll_IMU);
+   Serial.print(F(" roll_PID: "));
+   if (roll_PID >= 0)
+     Serial.print("+");
+   Serial.print(roll_PID);
+   Serial.print(F(" error_roll_deg: "));
+   if (error_roll_deg >= 0)
+     Serial.print("+");
+   Serial.print(error_roll_deg);
+     Serial.print(F(" derivative_roll_deg: "));
+   if (derivative_roll_deg >= 0)
+     Serial.print("+");
+   Serial.print(derivative_roll_deg);
+   Serial.print(F(" roll_PID_deg: "));
+   if (roll_PID_deg >= 0)
+     Serial.print("+");
+   Serial.println(roll_PID_deg);*/
 
   // Pitch (outer loop)
   error_pitch = pitch_des - pitch_IMU;
@@ -748,6 +761,12 @@ void commandMotors()
   m3_command_PWM += morter3_buffer;
   m4_command_PWM += morter4_buffer;
 
+  // ローパスフィルタ適用
+  m1_command_PWM = alpha_PWM * m1_command_PWM + (1 - alpha_PWM) * m1_pre_PWM;
+  m2_command_PWM = alpha_PWM * m2_command_PWM + (1 - alpha_PWM) * m2_pre_PWM;
+  m3_command_PWM = alpha_PWM * m3_command_PWM + (1 - alpha_PWM) * m3_pre_PWM;
+  m4_command_PWM = alpha_PWM * m4_command_PWM + (1 - alpha_PWM) * m4_pre_PWM;
+
   // PWM値を範囲内に制限
   m1_command_PWM = constrain(m1_command_PWM, throttle_min, throttle_Limit);
   m2_command_PWM = constrain(m2_command_PWM, throttle_min, throttle_Limit);
@@ -786,6 +805,11 @@ void commandMotors()
 
   // モーターにPWMを設定
   setMotorPWM(m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM, false);
+
+  m1_pre_PWM = m1_command_PWM;
+  m2_pre_PWM = m2_command_PWM;
+  m3_pre_PWM = m3_command_PWM;
+  m4_pre_PWM = m4_command_PWM;
 }
 
 void calibrateESCs()
@@ -884,25 +908,28 @@ void printGyro()
 
 void printMotorCommands()
 {
+  Serial.print(F("["));
   Serial.print(F("m1_command: "));
   Serial.print(m1_command_PWM);
-  Serial.print(F("  : "));
-  Serial.print(m1_command_scaled);
+  Serial.print(F(","));
+  // Serial.print(m1_command_scaled);
 
-  Serial.print(F("   m2_command: "));
+  Serial.print(F("m2_command: "));
   Serial.print(m2_command_PWM);
-  Serial.print(F("  : "));
-  Serial.print(m2_command_scaled);
+  Serial.print(F(","));
+  //  Serial.print(F("  : "));
+  // Serial.print(m2_command_scaled);
 
-  Serial.print(F("   m3_command: "));
+  Serial.print(F("m3_command: "));
   Serial.print(m3_command_PWM);
-  Serial.print(F("  :  "));
-  Serial.print(m3_command_scaled);
-  Serial.print(F("   m4_command: "));
-
-  Serial.println(m4_command_PWM);
-  Serial.print(F("  : "));
-  Serial.print(m4_command_scaled);
+  Serial.print(F(","));
+  // Serial.print(F("  :  "));
+  // Serial.print(m3_command_scaled);
+  Serial.print(F("m4_command: "));
+  Serial.print(m4_command_PWM);
+  Serial.println(F("]"));
+  // Serial.print(F("  : "));
+  // Serial.print(m4_command_scaled);
 }
 
 void printPIDoutput()
