@@ -161,6 +161,7 @@ void setMotorPWM(int m1, int m2, int m3, int m4, bool cal);
 void loopDrone();
 void showRecievedData();
 void getIMUdata();
+void ComplementaryFilter();
 void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az);
 void getDesiredAnglesAndThrottle();
 void PIDControlCalcs();
@@ -472,8 +473,9 @@ void loop()
 void loopDrone()
 {
   // showRecievedData();
-  getIMUdata();                                                                      // Pulls raw gyro andaccelerometer data from IMU and applies LP filters to remove noise
-  Madgwick6DOF(gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick, AccX, AccY, AccZ); // Updates roll_IMU, pitch_IMU, and yaw_IMU angle estimates (degrees)
+  getIMUdata();   
+  ComplementaryFilter();                                                     
+  //Madgwick6DOF(gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick, AccX, AccY, AccZ); // Updates roll_IMU, pitch_IMU, and yaw_IMU angle estimates (degrees)
   getDesiredAnglesAndThrottle();                                                     // Convert raw commands to normalized values based on saturated control limits
   PIDControlCalcs();                                                                 // The PID functions. Stabilize on angle setpoint from getDesiredAnglesAndThrottle
   controlMixer();                                                                    // Mixes PID outputs to scaled actuator commands -- custom mixing assignments done here
@@ -539,6 +541,14 @@ void getIMUdata()
     AccY /= norm;
     AccZ /= norm;
   }
+}
+
+void ComplementaryFilter()
+{
+  // 相補性フィルター
+  roll_IMU = alpha * (roll_IMU + dpsX * deltaTime) + (1 - alpha) * GyroX;
+  pitch_IMU = alpha * (pitch_IMU + dpsY * deltaTime) + (1 - alpha) * GyroY;
+  yaw_IMU = alpha * (yaw_IMU + dpsZ * deltaTime) + (1 - alpha) * GyroZ;
 }
 
 void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az)
