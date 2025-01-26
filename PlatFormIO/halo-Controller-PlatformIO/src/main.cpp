@@ -62,12 +62,12 @@ float PID_Adjuster = 1;
 float PID_Limit = 360; // deg/sec
 float PID_Limit_deg = 0.20;
 
-float Kp_roll_angle = 3.6 * parameter_rate;   // Roll P-gain
+float Kp_roll_angle = 3.6 * parameter_rate; // Roll P-gain
 float Ki_roll_angle = 0.0 * parameter_rate; // Roll I-gain
 float Kd_roll_angle = 0 * parameter_rate;   // Roll D-gain
 
-float Kp_pitch_angle = Kp_roll_angle; // Pitch P-gain
-float Ki_pitch_angle = Ki_roll_angle; // Pitch I-gain
+float Kp_pitch_angle = Kp_roll_angle;  // Pitch P-gain
+float Ki_pitch_angle = Ki_roll_angle;  // Pitch I-gain
 float Kd_pitch_angle = Kd_pitch_angle; // Pitch D-gain
 
 float roll_Weight = 1, pitch_Weight = 1, yaw_Weight = 0.0001;
@@ -119,7 +119,7 @@ float keep_rotating = false;
 float zero_throttle_safty = true;
 bool emergency;
 
-const float alpha = 0.50; // 相補性フィルターの係数
+const float alpha = 0.10; // 相補性フィルターの係数
 
 float alpha_des = 0.15;
 float thro_pre = 0.0;
@@ -484,21 +484,21 @@ void loop()
 void loopDrone()
 {
   // showRecievedData();
-  getIMUdata();   
-  ComplementaryFilter();                                                     
-  getDesiredAnglesAndThrottle();                                                     // Convert raw commands to normalized values based on saturated control limits
-  PIDControlCalcs();                                                                 // The PID functions. Stabilize on angle setpoint from getDesiredAnglesAndThrottle
-  controlMixer();                                                                    // Mixes PID outputs to scaled actuator commands -- custom mixing assignments done here
-  scaleCommands();                                                                   // Scales motor commands to 0-1
-  commandMotors();                                                                   // Sends command pulses to each ESC pin to drive the motors
-  getRadioSticks();                                                                  // Gets the PWM from the radio receiver
+  getIMUdata();
+  ComplementaryFilter();
+  getDesiredAnglesAndThrottle(); // Convert raw commands to normalized values based on saturated control limits
+  PIDControlCalcs();             // The PID functions. Stabilize on angle setpoint from getDesiredAnglesAndThrottle
+  controlMixer();                // Mixes PID outputs to scaled actuator commands -- custom mixing assignments done here
+  scaleCommands();               // Scales motor commands to 0-1
+  commandMotors();               // Sends command pulses to each ESC pin to drive the motors
+  getRadioSticks();              // Gets the PWM from the radio receiver
 
   // printAcc();
   // printGyro();
   // printRollPitchYaw();
   //  printPIDoutput();
   // printYawPID();
- // printRollPID();
+  // printRollPID();
   // printDes();
   // printMotorCommands();
   // ShowGyro();
@@ -566,7 +566,6 @@ void ComplementaryFilter()
   }
 }
 
-
 void getDesiredAnglesAndThrottle()
 {
 
@@ -606,9 +605,9 @@ void PIDControlCalcs()
   roll_PID = constrain(roll_PID, -PID_Limit, PID_Limit);
 
   // Roll (inner loop)
-  error_roll_deg = roll_PID -(error_roll - error_roll_prev) / deltaTime;
-  error_roll_deg = alpha_derivative * error_roll_deg + (1.0 - alpha_des) *error_roll_prev_deg;
-
+  derivative_roll = dpsX - init_dpsX;
+  error_roll_deg = roll_PID - derivative_roll;
+  error_roll_deg = alpha_derivative * error_roll_deg + (1.0 - alpha_derivative) * error_roll_prev_deg;
 
   integral_roll_deg = integral_roll_prev_deg + error_roll_deg * deltaTime;
   integral_roll_deg = constrain(integral_roll_deg, -i_limit_deg, i_limit_deg);
@@ -617,6 +616,12 @@ void PIDControlCalcs()
   roll_PID_deg = roll_Weight_deg * (Kp_roll_angle_deg * error_roll_deg + Ki_roll_angle_deg * integral_roll_deg - Kd_roll_angle_deg * derivative_roll_deg);
   roll_PID_deg = constrain(roll_PID_deg, -PID_Limit_deg, PID_Limit_deg);
 
+  Serial.print(F(" error_roll: "));
+  Serial.print(error_roll);
+  Serial.print(F(" derivative_roll: "));
+  if (derivative_roll >= 0)
+    Serial.print("+");
+  Serial.print(derivative_roll);
   Serial.print(F(" roll_IMU: "));
   Serial.print(roll_IMU);
   Serial.print(F(" roll_PID: "));
@@ -635,8 +640,9 @@ void PIDControlCalcs()
   pitch_PID = constrain(pitch_PID, -PID_Limit / pitch_Weight, PID_Limit / pitch_Weight);
 
   // Pitch (inner loop)
-  error_pitch_deg = pitch_PID - (error_pitch - error_pitch_prev) / deltaTime;
-  error_pitch_deg = alpha_derivative * error_pitch_deg + (1.0 - alpha_des) * error_pitch_prev_deg;
+  derivative_pitch = dpsY - init_dpsY;
+  error_pitch_deg = pitch_PID - derivative_pitch;
+  error_pitch_deg = alpha_derivative * error_pitch_deg + (1.0 - alpha_derivative) * error_pitch_prev_deg;
 
   integral_pitch_deg = integral_pitch_prev_deg + error_pitch_deg * deltaTime;
   integral_pitch_deg = constrain(integral_pitch_deg, -i_limit_deg, i_limit_deg);
@@ -662,8 +668,6 @@ void PIDControlCalcs()
   integral_pitch_prev = integral_pitch;
   integral_pitch_prev_deg = integral_pitch_deg;
 
-  
-  
   error_roll_prev = error_roll;
   error_roll_prev_deg = error_roll_deg;
 
