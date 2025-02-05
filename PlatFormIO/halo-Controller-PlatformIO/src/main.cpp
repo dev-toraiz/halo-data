@@ -47,8 +47,8 @@ int morter4_buffer = 0; // FL
 
 // Controller parameters (this is where you "tune it".  It's best to use the WiFi interface to do it live and then update once its tuned.):
 float i_limit = 25;    // Integrator saturation level, mostly for safety (default 25.0)
-float maxRoll = 20.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxPitch = 20.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxRoll = 15.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
+float maxPitch = 15.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
 float maxYaw = 140.0;  // Max yaw rate in deg/sec (default 160.0)
 float throttle_Limit = 1800;
 
@@ -59,22 +59,22 @@ float hoverYaw = 0;
 float parameter_rate = 1.0;
 
 float PID_Adjuster = 1;
-float PID_Limit = 0.16;
+float PID_Limit = 0.20;
 
-float Kp_roll_angle = 0.26* parameter_rate; // Roll P-gain
-float Ki_roll_angle = 0.01* parameter_rate; // Roll I-gain0.9
-float Kd_roll_angle =0.050* parameter_rate;   // Roll D-gain2
+float Kp_roll_angle =1.5* parameter_rate; // Roll P-gain
+float Ki_roll_angle = 0.1* parameter_rate; // Roll I-gain0.9
+float Kd_roll_angle =0.0* parameter_rate;   // Roll D-gain0.9
 
 float Kp_pitch_angle = Kp_roll_angle; // Pitch P-gain
 float Ki_pitch_angle = Ki_roll_angle; // Pitch I-gain
 float Kd_pitch_angle = Kd_pitch_angle; // Pitch D-gain
 
-float Kp_yaw = 20; // Yaw P-gain default 30
+float Kp_yaw = 16; // Yaw P-gain default 30
 float Ki_yaw = 0;  // Yaw I-gain default 5
 float Kd_yaw = 1;  // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)
 
-float Roll_ProportionalBand = 30;  // deg
-float Pitch_ProportionalBand = 30; // deg
+float Roll_ProportionalBand = 15;  // deg
+float Pitch_ProportionalBand = 15; // deg
 float Yaw_ProportionalBand = 30;   // deg
 
 float Out_ProportionalBand_Roll, Out_ProportionalBand_Pitch;
@@ -496,7 +496,7 @@ void loopDrone()
   // printYawPID();
   printRollPID();
   // printDes();
-  // printMotorCommands();
+   //printMotorCommands();
   // ShowGyro();
 }
 
@@ -634,7 +634,7 @@ void PIDControlCalcs()
   derivative_pitch = (error_pitch - error_pitch_prev) / deltaTime;
   derivative_pitch = alpha_derivative * derivative_pitch + (1.0 - alpha_derivative) * derivative_pitch_pre;
   derivative_pitch_pre = derivative_pitch;
-  pitch_PID = (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch + Kd_pitch_angle * derivative_pitch);
+  pitch_PID = (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch+ Kd_pitch_angle * derivative_pitch);
   pitch_PID -= pitchPIDError;
   pitch_PID = constrain(pitch_PID, -PID_Limit / pitch_Weight, PID_Limit / pitch_Weight);
 
@@ -875,25 +875,28 @@ void printGyro()
 
 void printMotorCommands()
 {
+  Serial.print(F("["));
   Serial.print(F("m1_command: "));
   Serial.print(m1_command_PWM);
-  Serial.print(F("  : "));
-  Serial.print(m1_command_scaled);
+  Serial.print(F(","));
+  // Serial.print(m1_command_scaled);
 
-  Serial.print(F("   m2_command: "));
+  Serial.print(F("m2_command: "));
   Serial.print(m2_command_PWM);
-  Serial.print(F("  : "));
-  Serial.print(m2_command_scaled);
+  Serial.print(F(","));
+  //  Serial.print(F("  : "));
+  // Serial.print(m2_command_scaled);
 
-  Serial.print(F("   m3_command: "));
+  Serial.print(F("m3_command: "));
   Serial.print(m3_command_PWM);
-  Serial.print(F("  :  "));
-  Serial.print(m3_command_scaled);
-  Serial.print(F("   m4_command: "));
-
-  Serial.println(m4_command_PWM);
-  Serial.print(F("  : "));
-  Serial.print(m4_command_scaled);
+  Serial.print(F(","));
+  // Serial.print(F("  :  "));
+  // Serial.print(m3_command_scaled);
+  Serial.print(F("m4_command: "));
+  Serial.print(m4_command_PWM);
+  Serial.println(F("]"));
+  // Serial.print(F("  : "));
+  // Serial.print(m4_command_scaled);
 }
 
 void printPIDoutput()
