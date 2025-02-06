@@ -61,9 +61,9 @@ float parameter_rate = 1.0;
 float PID_Adjuster = 1;
 float PID_Limit = 0.20;
 
-float Kp_roll_angle =1.5* parameter_rate; // Roll P-gain
-float Ki_roll_angle = 0.1* parameter_rate; // Roll I-gain0.9
-float Kd_roll_angle =0.0* parameter_rate;   // Roll D-gain0.9
+float Kp_roll_angle =0.51* parameter_rate; // Roll P-gain0.5
+float Ki_roll_angle =0.11* parameter_rate; // Roll I-gain0.11
+float Kd_roll_angle =0.08* parameter_rate;   // Roll D-gain0.08*
 
 float Kp_pitch_angle = Kp_roll_angle; // Pitch P-gain
 float Ki_pitch_angle = Ki_roll_angle; // Pitch I-gain
@@ -993,9 +993,4 @@ void printRollPID()
   if (roll_PID >= 0)
     Serial.print("+");
   Serial.println(roll_PID);
-}
-
-float invSqrt(float x)
-{
-  return 1.0 / sqrtf(x); // Teensy is fast enough to just take the compute penalty lol suck it arduino nano
 }
