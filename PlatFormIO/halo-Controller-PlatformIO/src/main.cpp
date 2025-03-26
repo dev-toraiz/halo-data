@@ -1,9 +1,9 @@
 #include <Wire.h>
-#include <MadgwickAHRS.h>
 #include <MPU6050.h>
 #include <Arduino.h>
 #include <SPI.h>
 #include <ESP32Servo.h>
+#include <Madgwick.h>
 
 // SDA（データライン）: GPIO21
 // SCL（クロックライン）: GPIO22
