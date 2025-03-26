@@ -61,17 +61,17 @@ float parameter_rate = 1.0;
 float PID_Adjuster = 1;
 float PID_Limit = 0.20;
 
-float Kp_roll_angle =0.51* parameter_rate; // Roll P-gain0.5
-float Ki_roll_angle =0.11* parameter_rate; // Roll I-gain0.11
-float Kd_roll_angle =0.08* parameter_rate;   // Roll D-gain0.08*
+float Kp_roll_angle = 1.2 * parameter_rate; // Roll P-gain0.5  0.51
+float Ki_roll_angle = 0.1 * parameter_rate; // Roll I-gain0.11 0.11
+float Kd_roll_angle = 0.8 * parameter_rate; // Roll D-gain0.08*
 
-float Kp_pitch_angle = Kp_roll_angle; // Pitch P-gain
-float Ki_pitch_angle = Ki_roll_angle; // Pitch I-gain
+float Kp_pitch_angle = Kp_roll_angle;  // Pitch P-gain
+float Ki_pitch_angle = Ki_roll_angle;  // Pitch I-gain
 float Kd_pitch_angle = Kd_pitch_angle; // Pitch D-gain
 
-float Kp_yaw = 16; // Yaw P-gain default 30
-float Ki_yaw = 0;  // Yaw I-gain default 5
-float Kd_yaw = 1;  // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)
+float Kp_yaw = 15;    // Yaw P-gain default 30 16
+float Ki_yaw = 5; // Yaw I-gain default 5
+float Kd_yaw = 0.1;     // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)1
 
 float Roll_ProportionalBand = 15;  // deg
 float Pitch_ProportionalBand = 15; // deg
@@ -478,7 +478,7 @@ void loop()
 
 void loopDrone()
 {
-  // showRecievedData();
+  //showRecievedData();
   getIMUdata();
   ComplementaryFilter(); // Pulls raw gyro andaccelerometer data from IMU and applies LP filters to remove noise
   // Madgwick6DOF(gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick, AccX, AccY, AccZ); // Updates roll_IMU, pitch_IMU, and yaw_IMU angle estimates (degrees)
@@ -489,14 +489,14 @@ void loopDrone()
   commandMotors();               // Sends command pulses to each ESC pin to drive the motors
   getRadioSticks();              // Gets the PWM from the radio receiver
 
-  // printAcc();
+ // printAcc();
   // printGyro();
   // printRollPitchYaw();
-  //  printPIDoutput();
+   // printPIDoutput();
   // printYawPID();
-  printRollPID();
+  // printRollPID();
   // printDes();
-   //printMotorCommands();
+   printMotorCommands();
   // ShowGyro();
 }
 
@@ -606,11 +606,8 @@ void PIDControlCalcs()
   // Roll
   error_roll = roll_des - roll_IMU;
   integral_roll = integral_roll_prev + error_roll * deltaTime;
-  integral_roll = constrain(integral_roll, -i_limit, i_limit);  // Limit integrator to prevent saturating
-  derivative_roll = (error_roll - error_roll_prev) / deltaTime; // deg/sec
-  derivative_roll = alpha_derivative * derivative_roll + (1.0 - alpha_derivative) * derivative_roll_pre;
-  derivative_roll_pre = derivative_roll;
-
+  integral_roll = constrain(integral_roll, -i_limit, i_limit); // Limit integrator to prevent saturating
+  derivative_roll = dpsX - init_dpsX;
   roll_PID = (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll + Kd_roll_angle * derivative_roll);
   roll_PID -= rollPIDError;
   roll_PID = constrain(roll_PID, -PID_Limit / roll_Weight, PID_Limit / roll_Weight);
@@ -631,10 +628,8 @@ void PIDControlCalcs()
   error_pitch = pitch_des - pitch_IMU;
   integral_pitch = integral_pitch_prev + error_pitch * deltaTime;
   integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
-  derivative_pitch = (error_pitch - error_pitch_prev) / deltaTime;
-  derivative_pitch = alpha_derivative * derivative_pitch + (1.0 - alpha_derivative) * derivative_pitch_pre;
-  derivative_pitch_pre = derivative_pitch;
-  pitch_PID = (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch+ Kd_pitch_angle * derivative_pitch);
+  derivative_pitch = dpsY - init_dpsY;
+  pitch_PID = (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch + Kd_pitch_angle * derivative_pitch);
   pitch_PID -= pitchPIDError;
   pitch_PID = constrain(pitch_PID, -PID_Limit / pitch_Weight, PID_Limit / pitch_Weight);
 
