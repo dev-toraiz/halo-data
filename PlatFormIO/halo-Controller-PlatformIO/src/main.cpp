@@ -3,989 +3,1032 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <ESP32Servo.h>
-#include <Madgwick.h>
 
-// SDA（データライン）: GPIO21
-// SCL（クロックライン）: GPIO22
-
-#define CHANNELS 8    // 使用するチャネル数
-#define SYNC_GAP 3000 // 同期信号判定のしきい値 (マイクロ秒)
-#define PPM_PIN 4     // PPM信号の入力ピン
-
-const int ledPin1 = 18; // LED1が接続されているピン番号
-const int ledPin2 = 19; // LED2が接続されているピン番号
-
-MPU6050 mpu;
-Madgwick MadgwickFilter;
-volatile unsigned long lastPulseTime = 0;   // 前回のパルス時間
-volatile int channelValues[CHANNELS] = {0}; // 各チャネルの値を格納
-volatile int currentChannel = 0;            // 現在のチャネルインデックス
-
-// The LOOP_TIMING is based on the IMU.  For the Arduino_LSM6DSOX, it is 104Hz.  So, the loop time is set a little longer so the IMU has time to update from the control change.
+// 定数定義
+#define CHANNELS 8
+#define SYNC_GAP 3000
+#define PPM_PIN 4
 #define LOOP_TIMING 100
 
 // モーターピン定義
-#define m1Pin 25
-#define m2Pin 26
-#define m3Pin 27
-#define m4Pin 32
-Servo ESC1, ESC2, ESC3, ESC4;
+#define MOTOR1_PIN 25 // RL
+#define MOTOR2_PIN 26 // RR
+#define MOTOR3_PIN 27 // FR
+#define MOTOR4_PIN 32 // FL
 
 // PWM設定
-const int pwmFrequency = 50;  // 50Hz (20ms周期、一般的なESCに対応)
-const int pwmResolution = 16; // 16ビット解像度
+#define PWM_FREQUENCY 50
+#define PWM_RESOLUTION 16
+#define THROTTLE_MIN 1000
+#define THROTTLE_MAX 2000
+#define THROTTLE_LIMIT 1800
 
-const int throttle_max = 2000; // 最大PWM
-const int throttle_min = 1000; // 最小PWM
-
-const float throttle_limit = 0.9;
-
-int morter1_buffer = 0; // RL
-int morter2_buffer = 0; // RR
-int morter3_buffer = 0; // FR
-int morter4_buffer = 0; // FL
-
-// Controller parameters (this is where you "tune it".  It's best to use the WiFi interface to do it live and then update once its tuned.):
-float i_limit = 25;    // Integrator saturation level, mostly for safety (default 25.0)
-float maxRoll = 15.0;  // Max roll angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxPitch = 15.0; // Max pitch angle in degrees for angle mode (maximum ~70 degrees), deg/sec for rate mode (default 30.0)
-float maxYaw = 140.0;  // Max yaw rate in deg/sec (default 160.0)
-float throttle_Limit = 1800;
-
-float hoverRoll = 0; //-1 to 1
-float hoverPitch = 0;
-float hoverYaw = 0;
-
-float parameter_rate = 1.0;
-
-float PID_Adjuster = 1;
-float PID_Limit = 0.20;
-
-float Kp_roll_angle = 1.2 * parameter_rate; // Roll P-gain0.5  0.51
-float Ki_roll_angle = 0.1 * parameter_rate; // Roll I-gain0.11 0.11
-float Kd_roll_angle = 0.8 * parameter_rate; // Roll D-gain0.08*
-
-float Kp_pitch_angle = Kp_roll_angle;  // Pitch P-gain
-float Ki_pitch_angle = Ki_roll_angle;  // Pitch I-gain
-float Kd_pitch_angle = Kd_pitch_angle; // Pitch D-gain
-
-float Kp_yaw = 15;    // Yaw P-gain default 30 16
-float Ki_yaw = 5; // Yaw I-gain default 5
-float Kd_yaw = 0.1;     // Yaw D-gain default .015 (be careful when increasing too high, motors will begin to overheat!)1
-
-float Roll_ProportionalBand = 15;  // deg
-float Pitch_ProportionalBand = 15; // deg
-float Yaw_ProportionalBand = 30;   // deg
-
-float Out_ProportionalBand_Roll, Out_ProportionalBand_Pitch;
-
-float stick_dampener = 0.95;
-
-// General stuff for controlling timing of things
-float deltaTime = 1;
-float invFreq = (1.0 / LOOP_TIMING) * 1000000.0;
-unsigned long current_time, prev_time;
-unsigned long print_counter, serial_counter;
-
-unsigned long previousMillis = 0;
-unsigned long currentMillis; // Declare currentMillis as a global variable
-float frameRate;
-
-// IMU:
-float AccX, AccY, AccZ;
-float AccX_prev, AccY_prev, AccZ_prev;
-float GyroX, GyroY, GyroZ;
-float GyroX_prev, GyroY_prev, GyroZ_prev;
-float roll_IMU, pitch_IMU, yaw_IMU;
-float roll_IMU_prev, pitch_IMU_prev;
-
-float rollPIDError = -0.00;
-float pitchPIDError = 0.00;
-
-float roll_Weight = 0.001, pitch_Weight = 0.001, yaw_Weight = 0.0001;
-
-float min_rotation = 200;
-float keep_rotating = false;
-float zero_throttle_safty = true;
-bool emergency;
-
-const float alpha = 0.70; // 相補性フィルターの係数
-
-float alpha_des = 0.15;
-float thro_pre = 0.0;
-float roll_pre = 0.0;
-float pitch_pre = 0.0;
-float yaw_pre = 0.0;
-
-float alpha_derivative = 0.1;
-float derivative_roll_pre, derivative_pitch_pre, derivative_yaw_pre;
-
-int MPU6050_ADDR = 0x68;
-int16_t raw_acc_x, raw_acc_y, raw_acc_z, raw_t, raw_gyro_x, raw_gyro_y, raw_gyro_z;
-float acc_angle_x, acc_angle_y;
-double gyro_angle_x = 0, gyro_angle_y = 0, gyro_angle_z = 0;
-float interval, preInterval;
-double offsetX = 0, offsetY = 0, offsetZ = 0;
-float angleX, angleY, angleZ;
-float dpsX, dpsY, dpsZ;
-double init_angleX = 0, init_angleY = 0, init_angleZ = 0;
-double init_AccX = 0, init_AccY = 0, init_AccZ = 0, init_dpsX = 0, init_dpsY = 0, init_dpsZ = 0;
-float gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick;
-
+// MPU6050レジスタアドレス
 #define MPU6050_SMPLRT_DIV 0x19
 #define MPU6050_CONFIG 0x1a
 #define MPU6050_GYRO_CONFIG 0x1b
 #define MPU6050_ACCEL_CONFIG 0x1c
 #define MPU6050_PWR_MGMT_1 0x6b
 
-// Normalized desired state:
-float thro_des, roll_des, pitch_des, yaw_des;
+// キャリブレーション設定
+#define CALIBRATION_SAMPLES 1200
+#define CALIBRATION_DISCARD 200
 
-float volA_norm, volB_norm;
+// 物理定数
+#define DEG_TO_RAD 0.017453292519943295
+#define RAD_TO_DEG 57.29577951308232
 
-// Controller:
-float error_roll, error_roll_prev, roll_des_prev, integral_roll, integral_roll_il, integral_roll_ol, integral_roll_prev, integral_roll_prev_il, integral_roll_prev_ol, derivative_roll;
-float error_pitch, error_pitch_prev, pitch_des_prev, integral_pitch, integral_pitch_il, integral_pitch_ol, integral_pitch_prev, integral_pitch_prev_il, integral_pitch_prev_ol, derivative_pitch;
-float error_yaw, error_yaw_prev, integral_yaw, integral_yaw_prev, derivative_yaw;
-double roll_PID, pitch_PID, yaw_PID;
+// グローバル変数として定義
+volatile unsigned long lastPulseTime = 0;
+volatile int channelValues[CHANNELS] = {0};
+volatile int currentChannel = 0;
+const unsigned long SYNC_GAP_VALUE = SYNC_GAP; // 定数をグローバルに定義
 
-// Mixer
-float m1_command_scaled, m2_command_scaled, m3_command_scaled, m4_command_scaled;
-
-// Radio communication:
-unsigned long PWM_throttle, PWM_roll, PWM_Elevation, PWM_Rudd, PWM_ThrottleCutSwitch;
-unsigned long PWM_throttle_prev, PWM_roll_prev, PWM_Elevation_prev, PWM_Rudd_prev;
-unsigned long PWM_throttle_output, PWM_roll_output, PWM_Elevation_output, PWM_Rudd_output;
-unsigned long volA, volB;
-
-int m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM;
-
-// 関数を宣言
-//  プロトタイプ宣言（関数宣言）
-void calibrateESCs();
-void setMotorPWM(int m1, int m2, int m3, int m4, bool cal);
-void loopDrone();
-void showRecievedData();
-void getIMUdata();
-void ComplementaryFilter();
-void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az);
-void getDesiredAnglesAndThrottle();
-void PIDControlCalcs();
-void controlMixer();
-void scaleCommands();
-void commandMotors();
-void getRadioSticks();
-void printAcc();
-void printGyro();
-void printRollPitchYaw();
-void printPIDoutput();
-void printMotorCommands();
-void printDes();
-void printYawPID();
-void printRollPID();
-void showRecievedData();
-
-// 割り込み関数
-void IRAM_ATTR ppmInterrupt()
+// 通常の関数として割り込みハンドラを実装
+void IRAM_ATTR ppmInterruptHandler()
 {
-  unsigned long pulseTime = micros();                   // 現在の時間を取得
-  unsigned long pulseWidth = pulseTime - lastPulseTime; // パルス幅を計算
+  unsigned long pulseTime = micros();
+  unsigned long pulseWidth = pulseTime - lastPulseTime;
   lastPulseTime = pulseTime;
 
-  if (pulseWidth > SYNC_GAP)
-  {                     // 同期信号を検出
-    currentChannel = 0; // チャネルをリセット
-  }
-  else
+  if (pulseWidth > SYNC_GAP_VALUE)
   {
-    if (currentChannel < CHANNELS)
-    {                                             // 有効なチャネル範囲内であれば
-      channelValues[currentChannel] = pulseWidth; // チャネル値を格納
-      currentChannel++;                           // 次のチャネルへ
-    }
+    currentChannel = 0;
+  }
+  else if (currentChannel < CHANNELS)
+  {
+    channelValues[currentChannel] = pulseWidth;
+    currentChannel++;
   }
 }
 
-void AcceleroMeterAddressSetup()
+// カルマンフィルタークラス
+class KalmanFilter
 {
-  byte error, address;
-  int nDevices = 0;
-  for (address = 1; address < 127; address++)
+private:
+  float Q_angle = 0.001;  // プロセスノイズの分散
+  float Q_bias = 0.003;   // プロセスノイズの分散
+  float R_measure = 0.03; // 測定ノイズの分散
+
+  float angle = 0;                  // 角度
+  float bias = 0;                   // ジャイロバイアス
+  float P[2][2] = {{0, 0}, {0, 0}}; // 誤差共分散行列
+
+public:
+  KalmanFilter()
   {
-    Wire.beginTransmission(address);
-    error = Wire.endTransmission();
-    if (error == 0)
+    P[0][0] = 0.001;
+    P[0][1] = 0;
+    P[1][0] = 0;
+    P[1][1] = 0.001;
+  }
+
+  float update(float newAngle, float newRate, float dt)
+  {
+    // 時間更新
+    angle += dt * (newRate - bias);
+
+    P[0][0] += dt * (dt * P[1][1] - P[0][1] - P[1][0] + Q_angle);
+    P[0][1] -= dt * P[1][1];
+    P[1][0] -= dt * P[1][1];
+    P[1][1] += Q_bias * dt;
+
+    // 測定更新
+    float y = newAngle - angle;
+    float S = P[0][0] + R_measure;
+    float K[2] = {P[0][0] / S, P[1][0] / S};
+
+    angle += K[0] * y;
+    bias += K[1] * y;
+
+    float P00_temp = P[0][0];
+    float P01_temp = P[0][1];
+
+    P[0][0] -= K[0] * P00_temp;
+    P[0][1] -= K[0] * P01_temp;
+    P[1][0] -= K[1] * P00_temp;
+    P[1][1] -= K[1] * P01_temp;
+
+    return angle;
+  }
+
+  void reset()
+  {
+    angle = 0;
+    bias = 0;
+    P[0][0] = 0.001;
+    P[0][1] = 0;
+    P[1][0] = 0;
+    P[1][1] = 0.001;
+  }
+};
+
+// クラス定義
+class DroneController
+{
+private:
+  // MPU6050関連
+  MPU6050 mpu;
+  int mpuAddr = 0x68;
+  int16_t rawAccX, rawAccY, rawAccZ, rawTemp, rawGyroX, rawGyroY, rawGyroZ;
+  float accX, accY, accZ;
+  float gyroX, gyroY, gyroZ;
+  float rollIMU, pitchIMU, yawIMU;
+  float accAngleX, accAngleY;
+  double gyroAngleX = 0, gyroAngleY = 0, gyroAngleZ = 0;
+  float interval, preInterval;
+  double offsetX = 0, offsetY = 0, offsetZ = 0;
+  float angleX, angleY, angleZ;
+  float dpsX, dpsY, dpsZ;
+  double initAngleX = 0, initAngleY = 0, initAngleZ = 0;
+  double initAccX = 0, initAccY = 0, initAccZ = 0;
+  double initDpsX = 0, initDpsY = 0, initDpsZ = 0;
+
+  // カルマンフィルター
+  KalmanFilter kalmanRoll;
+  KalmanFilter kalmanPitch;
+  KalmanFilter kalmanYaw;
+  float rollKalman = 0, pitchKalman = 0, yawKalman = 0;
+
+  // モーター制御
+  Servo ESC1, ESC2, ESC3, ESC4;
+  int m1_command_PWM = 0, m2_command_PWM = 0, m3_command_PWM = 0, m4_command_PWM = 0;
+  float m1_command_scaled = 0, m2_command_scaled = 0, m3_command_scaled = 0, m4_command_scaled = 0;
+  int morter1_buffer = 0, morter2_buffer = 0, morter3_buffer = 0, morter4_buffer = 0;
+
+  // 受信機データ
+  unsigned long PWM_throttle, PWM_roll, PWM_Elevation, PWM_Rudd, PWM_ThrottleCutSwitch;
+  unsigned long PWM_throttle_prev, PWM_roll_prev, PWM_Elevation_prev, PWM_Rudd_prev;
+  unsigned long PWM_throttle_output, PWM_roll_output, PWM_Elevation_output, PWM_Rudd_output;
+
+  // PID制御パラメータ
+  float i_limit = 25.0;
+  float maxRoll = 15.0;
+  float maxPitch = 15.0;
+  float maxYaw = 140.0;
+  float throttle_Limit = 1800;
+
+  float hoverRoll = 0;
+  float hoverPitch = 0;
+  float hoverYaw = 0;
+
+  float parameter_rate = 1.0;
+  float PID_Adjuster = 1.0;
+  float PID_Limit = 0.20;
+
+  // PIDゲイン
+  float Kp_roll_angle = 1.2 * parameter_rate;
+  float Ki_roll_angle = 0.1 * parameter_rate;
+  float Kd_roll_angle = 0.8 * parameter_rate;
+
+  float Kp_pitch_angle = 1.2 * parameter_rate;
+  float Ki_pitch_angle = 0.1 * parameter_rate;
+  float Kd_pitch_angle = 0.8 * parameter_rate;
+
+  float Kp_yaw = 15.0;
+  float Ki_yaw = 5.0;
+  float Kd_yaw = 0.1;
+
+  float Roll_ProportionalBand = 15.0;
+  float Pitch_ProportionalBand = 15.0;
+  float Yaw_ProportionalBand = 30.0;
+
+  float Out_ProportionalBand_Roll, Out_ProportionalBand_Pitch;
+
+  // PID変数
+  float error_roll = 0, error_roll_prev = 0;
+  float integral_roll = 0, integral_roll_prev = 0;
+  float derivative_roll = 0;
+
+  float error_pitch = 0, error_pitch_prev = 0;
+  float integral_pitch = 0, integral_pitch_prev = 0;
+  float derivative_pitch = 0;
+
+  float error_yaw = 0, error_yaw_prev = 0;
+  float integral_yaw = 0, integral_yaw_prev = 0;
+  float derivative_yaw = 0;
+
+  double roll_PID = 0, pitch_PID = 0, yaw_PID = 0;
+
+  // フィルター係数
+  float alpha = 0.70;
+  float alphaDes = 0.15;
+  float alphaDerivative = 0.1;
+
+  // 目標値
+  float thro_des = 0, roll_des = 0, pitch_des = 0, yaw_des = 0;
+  float thro_pre = 0, roll_pre = 0, pitch_pre = 0, yaw_pre = 0;
+  float derivative_yaw_pre = 0;
+
+  // その他
+  float rollPIDError = -0.00;
+  float pitchPIDError = 0.00;
+  float rollWeight = 0.001;
+  float pitchWeight = 0.001;
+  float yawWeight = 0.0001;
+  float minRotation = 200;
+  bool keepRotating = false;
+  bool zeroThrottleSafety = true;
+  bool emergency = false;
+  float stickDampener = 0.95;
+  float deltaTime = 0.01;
+  unsigned long previousMillis = 0;
+  unsigned long currentMillis;
+  float frameRate;
+
+public:
+  // コンストラクタ
+  DroneController()
+  {
+    emergency = false;
+  }
+
+  // 初期化
+  void begin()
+  {
+    // PPM受信機初期化
+    pinMode(PPM_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(PPM_PIN), ::ppmInterruptHandler, RISING);
+    Serial.println("PPM Receiver Initialized");
+
+    // MPU6050初期化
+    Wire.begin();
+    mpu.initialize();
+    if (!mpu.testConnection())
     {
-      if (address < 16)
-        MPU6050_ADDR = address;
-      nDevices++;
+      Serial.println("MPU6050接続失敗！");
+      while (1)
+        ;
     }
+    Serial.println("MPU6050接続成功！");
+    initializeMPU6050();
+
+    // モーター初期化
+    ESC1.attach(MOTOR1_PIN);
+    ESC2.attach(MOTOR2_PIN);
+    ESC3.attach(MOTOR3_PIN);
+    ESC4.attach(MOTOR4_PIN);
+    Serial.println("PWM successfully attached to all motors");
+
+    calibrateESCs();
   }
-}
 
-void AcceleroMeterWireRead()
-{
-  Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x6B);
-  Wire.write(0);
-  Wire.endTransmission(true);
-  Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x3B);
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU6050_ADDR, 14, true);
-  raw_acc_x = Wire.read() << 8 | Wire.read();
-  raw_acc_y = Wire.read() << 8 | Wire.read();
-  raw_acc_z = Wire.read() << 8 | Wire.read();
-  raw_t = Wire.read() << 8 | Wire.read();
-  raw_gyro_x = Wire.read() << 8 | Wire.read();
-  raw_gyro_y = Wire.read() << 8 | Wire.read();
-  raw_gyro_z = Wire.read() << 8 | Wire.read();
-}
-
-void calcRotation()
-{
-  AccX = (((float)raw_acc_x) / 16384.0);
-  AccY = (((float)raw_acc_y) / 16384.0);
-  AccZ = (((float)raw_acc_z) / 16384.0);
-  acc_angle_y = atan2(AccX, AccZ + abs(AccY)) * 360 / -2.0 / PI;
-  acc_angle_x = atan2(AccY, AccZ + abs(AccX)) * 360 / 2.0 / PI;
-  dpsX = (((float)raw_gyro_x) / 65.5);
-  dpsY = (((float)raw_gyro_y) / 65.5);
-  dpsZ = (((float)raw_gyro_z) / 65.5);
-  interval = millis() - preInterval;
-  preInterval = millis();
-  gyro_angle_x += (dpsX - offsetX) * (interval * 0.001);
-  gyro_angle_y += (dpsY - offsetY) * (interval * 0.001);
-  gyro_angle_z += (dpsZ - offsetZ) * (interval * 0.001);
-  angleX = (0.996 * gyro_angle_x) + (0.004 * acc_angle_x);
-  angleY = (0.996 * gyro_angle_y) + (0.004 * acc_angle_y);
-  angleZ = gyro_angle_z;
-  gyro_angle_x = angleX;
-  gyro_angle_y = angleY;
-  gyro_angle_z = angleZ;
-  GyroX = init_angleX - angleX;
-  GyroY = -(init_angleY - angleY);
-  GyroZ = init_angleZ - angleZ;
-}
-
-void ShowGyro()
-{
-  float sg_gx = dpsX - init_dpsX;
-  float sg_gy = dpsY - init_dpsY;
-  float sg_gz = dpsZ - init_dpsZ;
-  Serial.print("gx: ");
-  Serial.print(sg_gx);
-
-  Serial.print("gy: ");
-  Serial.print(sg_gy);
-
-  Serial.print("gz: ");
-  Serial.println(sg_gz);
-}
-
-void writeMPU6050(byte reg, byte data)
-{
-  Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(reg);
-  Wire.write(data);
-  Wire.endTransmission();
-}
-
-void AcceleroMeterAngleSetup()
-{
-  AcceleroMeterAddressSetup();
-  AcceleroMeterWireRead();
-  writeMPU6050(MPU6050_SMPLRT_DIV, 0x00);
-  writeMPU6050(MPU6050_CONFIG, 0x00);
-  writeMPU6050(MPU6050_GYRO_CONFIG, 0x08);
-  writeMPU6050(MPU6050_ACCEL_CONFIG, 0x00);
-  writeMPU6050(MPU6050_PWR_MGMT_1, 0x01);
-
-  Serial.print("Calculating Calibration");
-  for (int i = 0; i < 1200; i++)
+  // メインループ
+  void update()
   {
-    AcceleroMeterWireRead();
-    dpsX = ((float)raw_gyro_x) / 65.5;
-    dpsY = ((float)raw_gyro_y) / 65.5;
-    dpsZ = ((float)raw_gyro_z) / 65.5;
-    offsetX += dpsX;
-    offsetY += dpsY;
-    offsetZ += dpsZ;
+    currentMillis = millis();
 
-    if (i % 400 == 0)
+    if (currentMillis - previousMillis > 0)
     {
-      Serial.print(".");
+      deltaTime = (currentMillis - previousMillis) / 1000.0;
+      frameRate = 1000.0 / (currentMillis - previousMillis);
+      previousMillis = currentMillis;
     }
+
+    loopDrone();
   }
-  Serial.println();
-  offsetX /= 1200;
-  offsetY /= 1200;
-  offsetZ /= 1200;
 
-  Serial.println("Calibration complete:");
-  Serial.print("Offset X: ");
-  Serial.print(offsetX);
-  Serial.print("| Offset Y: ");
-  Serial.print(offsetY);
-  Serial.print("| Offset Z: ");
-  Serial.println(offsetZ);
-  Serial.println();
-
-  Serial.print("Calculating Rotation");
-
-  float sum_angleX = 0;
-  float sum_angleY = 0;
-  float sum_angleZ = 0;
-
-  for (int i = 0; i < 1200; i++)
+private:
+  // ドローン制御ループ
+  void loopDrone()
   {
-    calcRotation();
+    getIMUData();
+    applyFilters();
+    getDesiredAnglesAndThrottle();
+    calculatePIDControl();
+    controlMixer();
+    scaleCommands();
+    commandMotors();
+    getRadioSticks();
 
-    // 角度の累積
-    sum_angleX += angleX;
-    sum_angleY += angleY;
-    sum_angleZ += angleZ;
-
-    // プログレスを表示
-    if (i % 400 == 0)
-    {
-      Serial.print(".");
-    }
+    // デバッグ出力
+    printAcc();
+    printGyro();
+    printRollPitchYaw();
+    printPIDoutput();
+    printYawPID();
+    printRollPID();
+    printDes();
+    printMotorCommands();
+    ShowGyro();
   }
-  Serial.println();
 
-  init_angleX = sum_angleX / 1200;
-  init_angleY = sum_angleY / 1200;
-  init_angleZ = sum_angleZ / 1200;
-
-  Serial.println("Initial angles:");
-  Serial.print("Initial Angle X: ");
-  Serial.print(init_angleX);
-  Serial.print("| Initial Angle Y: ");
-  Serial.print(init_angleY);
-  Serial.print("| Initial Angle Z: ");
-  Serial.println(init_angleZ);
-  Serial.println();
-
-  float sum_AccX = 0;
-  float sum_AccY = 0;
-  float sum_AccZ = 0;
-  float sum_dpsX = 0;
-  float sum_dpsY = 0;
-  float sum_dpsZ = 0;
-
-  Serial.print("Calculating Acceleration");
-  for (int i = 0; i < 1200; i++)
+  // MPU6050初期化
+  void initializeMPU6050()
   {
-    calcRotation();
+    findMPU6050Address();
+    configureAccelerometer();
+    calibrateGyro();
+    calculateInitialAngles();
+    calculateInitialAcceleration();
+  }
 
-    sum_AccX += AccX;
-    sum_AccY += AccY;
-    sum_AccZ += AccZ;
-    sum_dpsX += dpsX;
-    sum_dpsY += dpsY;
-    sum_dpsZ += dpsZ;
-
-    if (i % 400 == 0)
+  void findMPU6050Address()
+  {
+    byte error, address;
+    int nDevices = 0;
+    for (address = 1; address < 127; address++)
     {
-      Serial.print(".");
+      Wire.beginTransmission(address);
+      error = Wire.endTransmission();
+      if (error == 0)
+      {
+        if (address < 16)
+          mpuAddr = address;
+        nDevices++;
+      }
     }
   }
-  Serial.println();
 
-  init_AccX = sum_AccX / 1200;
-  init_AccY = sum_AccY / 1200;
-  init_AccZ = sum_AccZ / 1200;
+  void configureAccelerometer()
+  {
+    writeMPU6050(MPU6050_SMPLRT_DIV, 0x00);
+    writeMPU6050(MPU6050_CONFIG, 0x00);
+    writeMPU6050(MPU6050_GYRO_CONFIG, 0x08);
+    writeMPU6050(MPU6050_ACCEL_CONFIG, 0x00);
+    writeMPU6050(MPU6050_PWR_MGMT_1, 0x01);
+  }
 
-  init_dpsX = sum_dpsX / 1200;
-  init_dpsY = sum_dpsY / 1200;
-  init_dpsZ = sum_dpsZ / 1200;
+  void calibrateGyro()
+  {
+    Serial.print("ジャイロキャリブレーション開始");
+    offsetX = offsetY = offsetZ = 0;
 
-  Serial.println("Initial acc");
-  Serial.print("Initial AccX: ");
-  Serial.print(init_AccX);
-  Serial.print("| Initial AccY : ");
-  Serial.print(init_AccY);
-  Serial.print("| Initial AccZ: ");
-  Serial.print(init_AccZ);
-  Serial.print("| Initial dpsX: ");
-  Serial.print(init_dpsX);
-  Serial.print("| Initial dpsY: ");
-  Serial.print(init_dpsY);
-  Serial.print("| Initial dosZ: ");
-  Serial.print(init_dpsZ);
-  Serial.println();
-}
+    // 最初のサンプルを捨てる
+    for (int i = 0; i < CALIBRATION_DISCARD; i++)
+    {
+      readMPU6050Data();
+      delay(1);
+    }
+
+    // 平均値計算用の変数
+    float sumX = 0, sumY = 0, sumZ = 0;
+    float maxX = -32768, maxY = -32768, maxZ = -32768;
+    float minX = 32767, minY = 32767, minZ = 32767;
+
+    for (int i = 0; i < CALIBRATION_SAMPLES; i++)
+    {
+      readMPU6050Data();
+      dpsX = ((float)rawGyroX) / 65.5;
+      dpsY = ((float)rawGyroY) / 65.5;
+      dpsZ = ((float)rawGyroZ) / 65.5;
+
+      sumX += dpsX;
+      sumY += dpsY;
+      sumZ += dpsZ;
+
+      // 最大・最小値の更新
+      maxX = max(maxX, dpsX);
+      maxY = max(maxY, dpsY);
+      maxZ = max(maxZ, dpsZ);
+      minX = min(minX, dpsX);
+      minY = min(minY, dpsY);
+      minZ = min(minZ, dpsZ);
+
+      if (i % 400 == 0)
+      {
+        Serial.print(".");
+      }
+      delay(1);
+    }
+
+    offsetX = sumX / CALIBRATION_SAMPLES;
+    offsetY = sumY / CALIBRATION_SAMPLES;
+    offsetZ = sumZ / CALIBRATION_SAMPLES;
+
+    // 変動範囲の計算
+    float rangeX = maxX - minX;
+    float rangeY = maxY - minY;
+    float rangeZ = maxZ - minZ;
+
+    Serial.println("\nキャリブレーション完了:");
+    Serial.printf("オフセット X: %.2f | Y: %.2f | Z: %.2f\n", offsetX, offsetY, offsetZ);
+    Serial.printf("変動範囲 X: %.2f | Y: %.2f | Z: %.2f\n", rangeX, rangeY, rangeZ);
+
+    // 変動が大きすぎる場合は警告
+    if (rangeX > 1.0 || rangeY > 1.0 || rangeZ > 1.0)
+    {
+      Serial.println("警告: キャリブレーション中にセンサーの変動が大きすぎます");
+      Serial.println("ドローンを安定した場所に置いて再キャリブレーションしてください");
+    }
+  }
+
+  void calculateInitialAngles()
+  {
+    Serial.print("初期角度計算中");
+    float sumAngleX = 0, sumAngleY = 0, sumAngleZ = 0;
+
+    for (int i = 0; i < CALIBRATION_SAMPLES; i++)
+    {
+      calculateRotation();
+      sumAngleX += angleX;
+      sumAngleY += angleY;
+      sumAngleZ += angleZ;
+
+      if (i % 400 == 0)
+      {
+        Serial.print(".");
+      }
+    }
+
+    initAngleX = sumAngleX / CALIBRATION_SAMPLES;
+    initAngleY = sumAngleY / CALIBRATION_SAMPLES;
+    initAngleZ = sumAngleZ / CALIBRATION_SAMPLES;
+
+    Serial.println("\n初期角度:");
+    Serial.printf("X: %.2f | Y: %.2f | Z: %.2f\n", initAngleX, initAngleY, initAngleZ);
+  }
+
+  void calculateInitialAcceleration()
+  {
+    Serial.print("初期加速度計算中");
+    float sumAccX = 0, sumAccY = 0, sumAccZ = 0;
+    float sumDpsX = 0, sumDpsY = 0, sumDpsZ = 0;
+
+    for (int i = 0; i < CALIBRATION_SAMPLES; i++)
+    {
+      calculateRotation();
+
+      sumAccX += accX;
+      sumAccY += accY;
+      sumAccZ += accZ;
+      sumDpsX += dpsX;
+      sumDpsY += dpsY;
+      sumDpsZ += dpsZ;
+
+      if (i % 400 == 0)
+      {
+        Serial.print(".");
+      }
+    }
+
+    initAccX = sumAccX / CALIBRATION_SAMPLES;
+    initAccY = sumAccY / CALIBRATION_SAMPLES;
+    initAccZ = sumAccZ / CALIBRATION_SAMPLES;
+    initDpsX = sumDpsX / CALIBRATION_SAMPLES;
+    initDpsY = sumDpsY / CALIBRATION_SAMPLES;
+    initDpsZ = sumDpsZ / CALIBRATION_SAMPLES;
+
+    Serial.println("\n初期加速度計算完了");
+    Serial.printf("AccX: %.4f | AccY: %.4f | AccZ: %.4f\n", initAccX, initAccY, initAccZ);
+    Serial.printf("DpsX: %.4f | DpsY: %.4f | DpsZ: %.4f\n", initDpsX, initDpsY, initDpsZ);
+  }
+
+  // MPU6050データ処理
+  void readMPU6050Data()
+  {
+    Wire.beginTransmission(mpuAddr);
+    Wire.write(0x3B);
+    Wire.endTransmission(false);
+    Wire.requestFrom(mpuAddr, 14, true);
+
+    rawAccX = Wire.read() << 8 | Wire.read();
+    rawAccY = Wire.read() << 8 | Wire.read();
+    rawAccZ = Wire.read() << 8 | Wire.read();
+    rawTemp = Wire.read() << 8 | Wire.read();
+    rawGyroX = Wire.read() << 8 | Wire.read();
+    rawGyroY = Wire.read() << 8 | Wire.read();
+    rawGyroZ = Wire.read() << 8 | Wire.read();
+  }
+
+  void writeMPU6050(byte reg, byte data)
+  {
+    Wire.beginTransmission(mpuAddr);
+    Wire.write(reg);
+    Wire.write(data);
+    Wire.endTransmission();
+  }
+
+  void calculateRotation()
+  {
+    accX = (((float)rawAccX) / 16384.0);
+    accY = (((float)rawAccY) / 16384.0);
+    accZ = (((float)rawAccZ) / 16384.0);
+
+    accAngleY = atan2(accX, accZ + abs(accY)) * 360 / -2.0 / PI;
+    accAngleX = atan2(accY, accZ + abs(accX)) * 360 / 2.0 / PI;
+
+    dpsX = (((float)rawGyroX) / 65.5);
+    dpsY = (((float)rawGyroY) / 65.5);
+    dpsZ = (((float)rawGyroZ) / 65.5);
+
+    interval = millis() - preInterval;
+    preInterval = millis();
+
+    gyroAngleX += (dpsX - offsetX) * (interval * 0.001);
+    gyroAngleY += (dpsY - offsetY) * (interval * 0.001);
+    gyroAngleZ += (dpsZ - offsetZ) * (interval * 0.001);
+
+    angleX = (0.996 * gyroAngleX) + (0.004 * accAngleX);
+    angleY = (0.996 * gyroAngleY) + (0.004 * accAngleY);
+    angleZ = gyroAngleZ;
+
+    gyroAngleX = angleX;
+    gyroAngleY = angleY;
+    gyroAngleZ = angleZ;
+
+    gyroX = initAngleX - angleX;
+    gyroY = -(initAngleY - angleY);
+    gyroZ = initAngleZ - angleZ;
+  }
+
+  void getIMUData()
+  {
+    readMPU6050Data();
+    calculateRotation();
+
+    // 加速度データの正規化
+    float norm = sqrt(accX * accX + accY * accY + accZ * accZ);
+    if (norm != 0)
+    {
+      accX /= norm;
+      accY /= norm;
+      accZ /= norm;
+    }
+  }
+
+  void applyFilters()
+  {
+    // 相補フィルター
+    float complementaryRoll = alpha * (rollIMU + (dpsX - initDpsX) * deltaTime) + (1 - alpha) * gyroX;
+    float complementaryPitch = alpha * (pitchIMU + (dpsY - initDpsY) * deltaTime) + (1 - alpha) * gyroY;
+    float complementaryYaw = alpha * (yawIMU + (dpsZ - initDpsZ) * deltaTime) + (1 - alpha) * gyroZ;
+
+    // カルマンフィルター
+    rollKalman = kalmanRoll.update(gyroX, dpsX - initDpsX, deltaTime);
+    pitchKalman = kalmanPitch.update(gyroY, dpsY - initDpsY, deltaTime);
+    yawKalman = kalmanYaw.update(gyroZ, dpsZ - initDpsZ, deltaTime);
+
+    // 適応型フィルター - 動きの大きさに応じてカルマンと相補フィルターを混合
+    float gyroMagnitude = sqrt(pow(dpsX - initDpsX, 2) + pow(dpsY - initDpsY, 2) + pow(dpsZ - initDpsZ, 2));
+    float adaptiveWeight = constrain(gyroMagnitude / 100.0, 0.0, 1.0);
+
+    // 最終的なフィルタリング結果
+    rollIMU = adaptiveWeight * rollKalman + (1 - adaptiveWeight) * complementaryRoll;
+    pitchIMU = adaptiveWeight * pitchKalman + (1 - adaptiveWeight) * complementaryPitch;
+    yawIMU = adaptiveWeight * yawKalman + (1 - adaptiveWeight) * complementaryYaw;
+  }
+
+  // 制御関連
+  void getDesiredAnglesAndThrottle()
+  {
+    // 入力PWM値から計算された目標値
+    thro_des = (PWM_throttle - 1000.0) / 1000.0;
+    roll_des = (PWM_roll - 1500.0) / 500.0;
+    pitch_des = -((PWM_Elevation - 1500.0) / 500.0);
+    yaw_des = -(PWM_Rudd - 1500.0) / 500.0;
+
+    // ローパスフィルター適用
+    thro_des = alphaDes * thro_des + (1.0 - alphaDes) * thro_pre;
+    roll_des = alphaDes * roll_des + (1.0 - alphaDes) * roll_pre;
+    pitch_des = alphaDes * pitch_des + (1.0 - alphaDes) * pitch_pre;
+    yaw_des = alphaDes * yaw_des + (1.0 - alphaDes) * yaw_pre;
+
+    thro_pre = thro_des;
+    roll_pre = roll_des;
+    pitch_pre = pitch_des;
+    yaw_pre = yaw_des;
+
+    // 範囲制限
+    thro_des = constrain(thro_des, 0.0, 1.0) * throttle_Limit;
+    roll_des = constrain(roll_des + hoverRoll, -1.0, 1.0) * maxRoll;
+    pitch_des = constrain(pitch_des + hoverPitch, -1.0, 1.0) * maxPitch;
+    yaw_des = constrain(yaw_des + hoverYaw, -1.0, 1.0) * maxYaw;
+  }
+
+  void calculatePIDControl()
+  {
+    // ロール制御
+    error_roll = roll_des - rollIMU;
+    integral_roll = integral_roll_prev + error_roll * deltaTime;
+    integral_roll = constrain(integral_roll, -i_limit, i_limit);
+    derivative_roll = dpsX - initDpsX;
+    roll_PID = (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll + Kd_roll_angle * derivative_roll);
+    roll_PID -= rollPIDError;
+    roll_PID = constrain(roll_PID, -PID_Limit / rollWeight, PID_Limit / rollWeight);
+
+    Out_ProportionalBand_Roll = (Kp_roll_angle * Roll_ProportionalBand);
+    Out_ProportionalBand_Roll = constrain(Out_ProportionalBand_Roll, -PID_Limit / rollWeight, PID_Limit / rollWeight);
+
+    if (error_roll > Roll_ProportionalBand)
+    {
+      roll_PID = Out_ProportionalBand_Roll;
+    }
+    else if (error_roll < -Roll_ProportionalBand)
+    {
+      roll_PID = -Out_ProportionalBand_Roll;
+    }
+
+    // ピッチ制御
+    error_pitch = pitch_des - pitchIMU;
+    integral_pitch = integral_pitch_prev + error_pitch * deltaTime;
+    integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
+    derivative_pitch = dpsY - initDpsY;
+    pitch_PID = (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch + Kd_pitch_angle * derivative_pitch);
+    pitch_PID -= pitchPIDError;
+    pitch_PID = constrain(pitch_PID, -PID_Limit / pitchWeight, PID_Limit / pitchWeight);
+
+    Out_ProportionalBand_Pitch = (Kp_pitch_angle * Pitch_ProportionalBand);
+    Out_ProportionalBand_Pitch = constrain(Out_ProportionalBand_Pitch, -PID_Limit / pitchWeight, PID_Limit / pitchWeight);
+
+    if (error_pitch > Pitch_ProportionalBand)
+    {
+      pitch_PID = Out_ProportionalBand_Pitch;
+    }
+    else if (error_pitch < -Pitch_ProportionalBand)
+    {
+      pitch_PID = -Out_ProportionalBand_Pitch;
+    }
+
+    // ヨー制御
+    error_yaw = yaw_des - (dpsZ - initDpsZ);
+    integral_yaw = integral_yaw_prev + error_yaw * deltaTime;
+    integral_yaw = constrain(integral_yaw, -i_limit, i_limit);
+    derivative_yaw = -(error_yaw - error_yaw_prev) / deltaTime;
+    derivative_yaw = alphaDerivative * derivative_yaw + (1.0 - alphaDes) * derivative_yaw_pre;
+    derivative_yaw_pre = derivative_yaw;
+    yaw_PID = yawWeight * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw);
+    yaw_PID = constrain(yaw_PID, -PID_Limit, PID_Limit);
+
+    // 変数更新
+    integral_roll_prev = integral_roll;
+    integral_pitch_prev = integral_pitch;
+    error_yaw_prev = error_yaw;
+    error_pitch_prev = error_pitch;
+    error_roll_prev = error_roll;
+    integral_yaw_prev = integral_yaw;
+  }
+
+  void controlMixer()
+  {
+    m1_command_scaled = (thro_des) + PID_Adjuster * (-pitchWeight * pitch_PID + rollWeight * roll_PID + yaw_PID);
+    m2_command_scaled = (thro_des) + PID_Adjuster * (-pitchWeight * pitch_PID - rollWeight * roll_PID - yaw_PID);
+    m3_command_scaled = (thro_des) + PID_Adjuster * (pitchWeight * pitch_PID - rollWeight * roll_PID + yaw_PID);
+    m4_command_scaled = (thro_des) + PID_Adjuster * (pitchWeight * pitch_PID + rollWeight * roll_PID - yaw_PID);
+
+    m1_command_scaled = constrain(m1_command_scaled, 0, 1.0);
+    m2_command_scaled = constrain(m2_command_scaled, 0, 1.0);
+    m3_command_scaled = constrain(m3_command_scaled, 0, 1.0);
+    m4_command_scaled = constrain(m4_command_scaled, 0, 1.0);
+  }
+
+  void scaleCommands()
+  {
+    m1_command_PWM = m1_command_scaled * (THROTTLE_MAX - THROTTLE_MIN);
+    m2_command_PWM = m2_command_scaled * (THROTTLE_MAX - THROTTLE_MIN);
+    m3_command_PWM = m3_command_scaled * (THROTTLE_MAX - THROTTLE_MIN);
+    m4_command_PWM = m4_command_scaled * (THROTTLE_MAX - THROTTLE_MIN);
+  }
+
+  void getRadioSticks()
+  {
+    // チャンネル値を安全にコピー
+    noInterrupts();
+    PWM_throttle = channelValues[2];
+    PWM_roll = channelValues[0];
+    PWM_Elevation = channelValues[1];
+    PWM_Rudd = channelValues[3];
+    interrupts();
+
+    if (channelValues[6] <= 1500)
+    {
+      keepRotating = true;
+    }
+    else
+    {
+      keepRotating = false;
+    }
+
+    PWM_throttle_output = PWM_throttle;
+    PWM_roll_output = PWM_roll;
+    PWM_Elevation_output = PWM_Elevation;
+    PWM_Rudd_output = PWM_Rudd;
+
+    PWM_throttle = (stickDampener)*PWM_throttle_prev + (1 - stickDampener) * PWM_throttle;
+    PWM_roll = (1.0 - stickDampener) * PWM_roll_prev + stickDampener * PWM_roll;
+    PWM_Elevation = (1.0 - stickDampener) * PWM_Elevation_prev + stickDampener * PWM_Elevation;
+    PWM_Rudd = (1.0 - stickDampener) * PWM_Rudd_prev + stickDampener * PWM_Rudd;
+
+    PWM_throttle_prev = PWM_throttle;
+    PWM_roll_prev = PWM_roll;
+    PWM_Elevation_prev = PWM_Elevation;
+    PWM_Rudd_prev = PWM_Rudd;
+  }
+
+  int getChannelValue(int channelIndex)
+  {
+    if (channelIndex >= 0 && channelIndex < CHANNELS)
+    {
+      noInterrupts();
+      int value = channelValues[channelIndex];
+      interrupts();
+      return value;
+    }
+    else
+    {
+      Serial.print("Error: Invalid channel index ");
+      Serial.println(channelIndex);
+      return 0;
+    }
+  }
+
+  // モーター制御
+  void commandMotors()
+  {
+    // ベーススロットル値とバッファ値を追加
+    m1_command_PWM += THROTTLE_MIN + morter1_buffer;
+    m2_command_PWM += THROTTLE_MIN + morter2_buffer;
+    m3_command_PWM += THROTTLE_MIN + morter3_buffer;
+    m4_command_PWM += THROTTLE_MIN + morter4_buffer;
+
+    // PWM値を範囲内に制限
+    m1_command_PWM = constrain(m1_command_PWM, THROTTLE_MIN, throttle_Limit);
+    m2_command_PWM = constrain(m2_command_PWM, THROTTLE_MIN, throttle_Limit);
+    m3_command_PWM = constrain(m3_command_PWM, THROTTLE_MIN, throttle_Limit);
+    m4_command_PWM = constrain(m4_command_PWM, THROTTLE_MIN, throttle_Limit);
+
+    // スロットルが0の場合モーターを回さないようにする
+    if (thro_des <= 0.02 && zeroThrottleSafety && !keepRotating)
+    {
+      m1_command_PWM = THROTTLE_MIN;
+      m2_command_PWM = THROTTLE_MIN;
+      m3_command_PWM = THROTTLE_MIN;
+      m4_command_PWM = THROTTLE_MIN;
+    }
+
+    // もしプロポとの通信が切れた場合モーターを停止する
+    bool allZero = true;
+    noInterrupts();
+    for (int i = 0; i < CHANNELS; i++)
+    {
+      if (channelValues[i] != 0)
+      {
+        allZero = false;
+        break;
+      }
+    }
+    interrupts();
+
+    if (allZero)
+    {
+      m1_command_PWM = THROTTLE_MIN;
+      m2_command_PWM = THROTTLE_MIN;
+      m3_command_PWM = THROTTLE_MIN;
+      m4_command_PWM = THROTTLE_MIN;
+    }
+
+    // モーターにPWMを設定
+    setMotorPWM(m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM, false);
+  }
+
+  void calibrateESCs()
+  {
+    Serial.println("Starting calibration");
+    setMotorPWM(THROTTLE_MIN, THROTTLE_MIN, THROTTLE_MIN, THROTTLE_MIN, true);
+    Serial.println("Setting maximum throttle");
+    delay(2000);
+    Serial.println("Setting minimum throttle");
+    delay(2000);
+  }
+
+  void setMotorPWM(int m1, int m2, int m3, int m4, bool cal)
+  {
+    int duty1, duty2, duty3, duty4;
+
+    if (!cal && keepRotating)
+    {
+      duty1 = constrain(m1, THROTTLE_MIN + minRotation, THROTTLE_MAX);
+      duty2 = constrain(m2, THROTTLE_MIN + minRotation, THROTTLE_MAX);
+      duty3 = constrain(m3, THROTTLE_MIN + minRotation, THROTTLE_MAX);
+      duty4 = constrain(m4, THROTTLE_MIN + minRotation, THROTTLE_MAX);
+    }
+    else
+    {
+      duty1 = constrain(m1, THROTTLE_MIN, THROTTLE_MAX);
+      duty2 = constrain(m2, THROTTLE_MIN, THROTTLE_MAX);
+      duty3 = constrain(m3, THROTTLE_MIN, THROTTLE_MAX);
+      duty4 = constrain(m4, THROTTLE_MIN, THROTTLE_MAX);
+    }
+
+    if (emergency)
+    {
+      ESC1.writeMicroseconds(THROTTLE_MIN);
+      ESC2.writeMicroseconds(THROTTLE_MIN);
+      ESC3.writeMicroseconds(THROTTLE_MIN);
+      ESC4.writeMicroseconds(THROTTLE_MIN);
+    }
+    else
+    {
+      ESC1.writeMicroseconds(duty1);
+      ESC2.writeMicroseconds(duty2);
+      ESC3.writeMicroseconds(duty3);
+      ESC4.writeMicroseconds(duty4);
+    }
+  }
+
+  // デバッグ出力関数
+  void showRecievedData()
+  {
+    Serial.print("Channel values: ");
+    for (int i = 0; i < CHANNELS; i++)
+    {
+      Serial.print("CH");
+      Serial.print(i + 1);
+      Serial.print(": ");
+      Serial.print(channelValues[i]);
+      Serial.print("us\t");
+    }
+    Serial.println();
+  }
+
+  void printRollPitchYaw()
+  {
+    Serial.print(F(" roll_imu: "));
+    Serial.print(rollIMU);
+    Serial.print(F(" pitch_imu: "));
+    Serial.print(pitchIMU);
+    Serial.print(F(" yaw_imu: "));
+    Serial.println(yawIMU);
+  }
+
+  void printDes()
+  {
+    Serial.print(F("  roll_des: "));
+    Serial.print(roll_des);
+    Serial.print(F("| pitch_des: "));
+    Serial.print(pitch_des);
+    Serial.print(F("| yaw_des: "));
+    Serial.println(yaw_des);
+  }
+
+  void printAcc()
+  {
+    Serial.print(F(" AccX: "));
+    if (accX >= 0)
+      Serial.print("+");
+    Serial.print(accX);
+
+    Serial.print(F(" AccY: "));
+    if (accY >= 0)
+      Serial.print("+");
+    Serial.print(accY);
+
+    Serial.print(F(" AccZ: "));
+    if (accZ >= 0)
+      Serial.print("+");
+    Serial.println(accZ);
+  }
+
+  void printGyro()
+  {
+    Serial.print(F(" GyroX: "));
+    Serial.print(gyroX);
+    Serial.print(F(" GyroY: "));
+    Serial.print(gyroY);
+    Serial.print(F(" GyroZ: "));
+    Serial.println(gyroZ);
+  }
+
+  void ShowGyro()
+  {
+    float sg_gx = dpsX - initDpsX;
+    float sg_gy = dpsY - initDpsY;
+    float sg_gz = dpsZ - initDpsZ;
+    Serial.print("gx: ");
+    Serial.print(sg_gx);
+    Serial.print(" gy: ");
+    Serial.print(sg_gy);
+    Serial.print(" gz: ");
+    Serial.println(sg_gz);
+  }
+
+  void printMotorCommands()
+  {
+    Serial.print(F("["));
+    Serial.print(F("m1_command: "));
+    Serial.print(m1_command_PWM);
+    Serial.print(F(","));
+
+    Serial.print(F("m2_command: "));
+    Serial.print(m2_command_PWM);
+    Serial.print(F(","));
+
+    Serial.print(F("m3_command: "));
+    Serial.print(m3_command_PWM);
+    Serial.print(F(","));
+
+    Serial.print(F("m4_command: "));
+    Serial.print(m4_command_PWM);
+    Serial.println(F("]"));
+  }
+
+  void printPIDoutput()
+  {
+    Serial.print(F("roll_PID: "));
+    if (roll_PID >= 0)
+      Serial.print("+");
+    Serial.print(roll_PID);
+
+    Serial.print(F(" pitch_PID: "));
+    if (pitch_PID >= 0)
+      Serial.print("+");
+    Serial.print(pitch_PID);
+
+    Serial.print(F(" yaw_PID: "));
+    if (yaw_PID >= 0)
+      Serial.print("+");
+    Serial.println(yaw_PID);
+  }
+
+  void printReceive()
+  {
+    Serial.print(F(", \"PWM_throttle\": "));
+    Serial.print(PWM_throttle_output);
+    Serial.print(F(", \"PWM_roll\": "));
+    Serial.print(PWM_roll_output);
+    Serial.print(F(", \"PWM_Elevation\": "));
+    Serial.print(PWM_Elevation_output);
+    Serial.print(F(", \"PWM_Rudd\": "));
+    Serial.print(PWM_Rudd_output);
+  }
+
+  void printYawPID()
+  {
+    Serial.print("yaw_des: ");
+    if (yaw_des >= 0)
+      Serial.print("+");
+    Serial.print(yaw_des);
+
+    Serial.print(", dpsZ: ");
+    if (dpsZ >= 0)
+      Serial.print("+");
+    Serial.print(dpsZ);
+
+    Serial.print(", error_yaw: ");
+    if (error_yaw >= 0)
+      Serial.print("+");
+    Serial.print(error_yaw);
+
+    Serial.print(", integral_yaw: ");
+    if (integral_yaw >= 0)
+      Serial.print("+");
+    Serial.print(integral_yaw);
+
+    Serial.print(", derivative_yaw: ");
+    if (derivative_yaw >= 0)
+      Serial.print("+");
+    Serial.print(derivative_yaw);
+
+    Serial.print(", yaw_PID: ");
+    if (yaw_PID >= 0)
+      Serial.print("+");
+    Serial.println(yaw_PID);
+  }
+
+  void printRollPID()
+  {
+    Serial.print("roll_des: ");
+    if (roll_des >= 0)
+      Serial.print("+");
+    Serial.print(roll_des);
+
+    Serial.print(", roll_IMU: ");
+    if (rollIMU >= 0)
+      Serial.print("+");
+    Serial.print(rollIMU);
+
+    Serial.print(", error_roll: ");
+    if (error_roll >= 0)
+      Serial.print("+");
+    Serial.print(error_roll);
+
+    Serial.print(", integral_roll: ");
+    if (integral_roll >= 0)
+      Serial.print("+");
+    Serial.print(integral_roll);
+
+    Serial.print(", derivative_roll: ");
+    if (derivative_roll >= 0)
+      Serial.print("+");
+    Serial.print(derivative_roll);
+
+    Serial.print(", roll_PID: ");
+    if (roll_PID >= 0)
+      Serial.print("+");
+    Serial.println(roll_PID);
+  }
+};
+
+// グローバルインスタンス
+DroneController drone;
 
 void setup()
 {
   Serial.begin(115200);
-
-  emergency = false;
-
-  // ピンモードを設定
-  pinMode(ledPin1, OUTPUT);
-  pinMode(ledPin2, OUTPUT);
-  digitalWrite(ledPin1, HIGH);
-  digitalWrite(ledPin2, HIGH);
-
-  // レシーバー
-  pinMode(PPM_PIN, INPUT_PULLUP);                 // ピンを入力モードに設定
-  attachInterrupt(PPM_PIN, ppmInterrupt, RISING); // 割り込みを設定
-  Serial.println("PPM Receiver Initialized");
-
-  // MPU6050初期化
-  Wire.begin();
-  mpu.initialize();
-  if (!mpu.testConnection())
-  {
-    Serial.println("MPU6050接続失敗！");
-    while (1)
-      ;
-  }
-  Serial.println("MPU6050接続成功！");
-  AcceleroMeterAngleSetup();
-
-  // Madgwickフィルタの初期化
-  MadgwickFilter.begin(100);
-
-  // 各モーターをピンにアタッチ
-  ESC1.attach(m1Pin);
-  ESC2.attach(m2Pin);
-  ESC3.attach(m3Pin);
-  ESC4.attach(m4Pin);
-
-  Serial.println("PWM successfully attached to all motors");
-
-  calibrateESCs();
+  drone.begin();
 }
 
 void loop()
 {
-
-  currentMillis = millis();
-
-  if (currentMillis - previousMillis > 0)
-  {
-    deltaTime = (currentMillis - previousMillis) / 1000.0;
-    // Calculate the frame rate in frames per second (FPS)
-    frameRate = 1000.0 / (currentMillis - previousMillis);
-    previousMillis = currentMillis;
-  }
-
-  loopDrone();
-}
-
-void loopDrone()
-{
-  //showRecievedData();
-  getIMUdata();
-  ComplementaryFilter(); // Pulls raw gyro andaccelerometer data from IMU and applies LP filters to remove noise
-  // Madgwick6DOF(gx_for_Madgwick, gy_for_Madgwick, gz_for_Madgwick, AccX, AccY, AccZ); // Updates roll_IMU, pitch_IMU, and yaw_IMU angle estimates (degrees)
-  getDesiredAnglesAndThrottle(); // Convert raw commands to normalized values based on saturated control limits
-  PIDControlCalcs();             // The PID functions. Stabilize on angle setpoint from getDesiredAnglesAndThrottle
-  controlMixer();                // Mixes PID outputs to scaled actuator commands -- custom mixing assignments done here
-  scaleCommands();               // Scales motor commands to 0-1
-  commandMotors();               // Sends command pulses to each ESC pin to drive the motors
-  getRadioSticks();              // Gets the PWM from the radio receiver
-
- // printAcc();
-  // printGyro();
-  // printRollPitchYaw();
-   // printPIDoutput();
-  // printYawPID();
-  // printRollPID();
-  // printDes();
-   printMotorCommands();
-  // ShowGyro();
-}
-
-int getChannelValue(int channelIndex)
-{
-  if (channelIndex >= 0 && channelIndex < CHANNELS)
-  {
-    return channelValues[channelIndex];
-  }
-  else
-  {
-    Serial.print("Error: Invalid channel index ");
-    Serial.println(channelIndex);
-    return 0; // 無効なインデックスの場合はデフォルト値を返す
-  }
-}
-
-void showRecievedData()
-{
-  // 各チャネルの値をシリアルモニターに表示
-  Serial.print("Channel values: ");
-  for (int i = 0; i < CHANNELS; i++)
-  {
-    Serial.print("CH");
-    Serial.print(i + 1);
-    Serial.print(": ");
-    Serial.print(channelValues[i]);
-    Serial.print("us\t");
-  }
-  Serial.println();
-}
-
-void getIMUdata()
-{
-  AcceleroMeterWireRead();
-  calcRotation();
-
-  // ジャイロデータをラジアン毎秒に変換
-  gx_for_Madgwick = dpsX * DEG_TO_RAD;
-  gy_for_Madgwick = dpsY * DEG_TO_RAD;
-  gz_for_Madgwick = dpsZ * DEG_TO_RAD;
-
-  // 加速度データの正規化
-  float norm = sqrt(AccX * AccX + AccY * AccY + AccZ * AccZ);
-  if (norm != 0)
-  {
-    AccX /= norm;
-    AccY /= norm;
-    AccZ /= norm;
-  }
-}
-
-void ComplementaryFilter()
-{
-  // 相補性フィルター
-  roll_IMU = alpha * (roll_IMU + dpsX * deltaTime) + (1 - alpha) * GyroX;
-  pitch_IMU = alpha * (pitch_IMU + dpsY * deltaTime) + (1 - alpha) * GyroY;
-  yaw_IMU = alpha * (yaw_IMU + dpsZ * deltaTime) + (1 - alpha) * GyroZ;
-}
-
-void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az)
-{
-  MadgwickFilter.updateIMU(gx, gy, gz, ax, ay, az);
-
-  // roll_IMU = -(MadgwickFilter.getRoll() - init_angleX);
-  // pitch_IMU = MadgwickFilter.getPitch() - init_angleY;
-  roll_IMU = GyroX;
-  pitch_IMU = GyroY;
-  yaw_IMU = GyroZ;
-
-  if (abs(roll_IMU) >= 40 || abs(pitch_IMU) >= 40)
-  {
-    emergency = true;
-  }
-}
-
-void getDesiredAnglesAndThrottle()
-{
-
-  // 入力PWM値から計算された目標値
-  thro_des = (PWM_throttle - 1000.0) / 1000.0;
-  roll_des = (PWM_roll - 1500.0) / 500.0;
-  pitch_des = -((PWM_Elevation - 1500.0) / 500.0);
-  yaw_des = -(PWM_Rudd - 1500.0) / 500.0;
-
-  // ローパスフィルター適用
-  thro_des = alpha_des * thro_des + (1.0 - alpha_des) * thro_pre;
-  roll_des = alpha_des * roll_des + (1.0 - alpha_des) * roll_pre;
-  pitch_des = alpha_des * pitch_des + (1.0 - alpha_des) * pitch_pre;
-  yaw_des = alpha_des * yaw_des + (1.0 - alpha_des) * yaw_pre;
-
-  thro_pre = thro_des;
-  roll_pre = roll_des;
-  pitch_pre = pitch_des;
-  yaw_pre = yaw_des;
-
-  // Constrain within normalized bounds
-  thro_des = constrain(thro_des, 0.0, 1.0) * throttle_limit;           // Between 0 and 1
-  roll_des = constrain(roll_des + hoverRoll, -1.0, 1.0) * maxRoll;     // Between -maxRoll and +maxRoll
-  pitch_des = constrain(pitch_des + hoverPitch, -1.0, 1.0) * maxPitch; // Between -maxPitch and +maxPitch
-  yaw_des = constrain(yaw_des + hoverYaw, -1.0, 1.0) * maxYaw;         // Between -maxYaw and +maxYaw
-}
-
-void PIDControlCalcs()
-{
-
-  // Roll
-  error_roll = roll_des - roll_IMU;
-  integral_roll = integral_roll_prev + error_roll * deltaTime;
-  integral_roll = constrain(integral_roll, -i_limit, i_limit); // Limit integrator to prevent saturating
-  derivative_roll = dpsX - init_dpsX;
-  roll_PID = (Kp_roll_angle * error_roll + Ki_roll_angle * integral_roll + Kd_roll_angle * derivative_roll);
-  roll_PID -= rollPIDError;
-  roll_PID = constrain(roll_PID, -PID_Limit / roll_Weight, PID_Limit / roll_Weight);
-
-  Out_ProportionalBand_Roll = (Kp_roll_angle * Roll_ProportionalBand);
-  Out_ProportionalBand_Roll = constrain(Out_ProportionalBand_Roll, -PID_Limit / roll_Weight, PID_Limit / roll_Weight);
-
-  if (error_roll > Roll_ProportionalBand)
-  {
-    roll_PID = Out_ProportionalBand_Roll;
-  }
-  else if (error_roll < -Roll_ProportionalBand)
-  {
-    roll_PID = -Out_ProportionalBand_Roll;
-  }
-
-  // Pitch
-  error_pitch = pitch_des - pitch_IMU;
-  integral_pitch = integral_pitch_prev + error_pitch * deltaTime;
-  integral_pitch = constrain(integral_pitch, -i_limit, i_limit);
-  derivative_pitch = dpsY - init_dpsY;
-  pitch_PID = (Kp_pitch_angle * error_pitch + Ki_pitch_angle * integral_pitch + Kd_pitch_angle * derivative_pitch);
-  pitch_PID -= pitchPIDError;
-  pitch_PID = constrain(pitch_PID, -PID_Limit / pitch_Weight, PID_Limit / pitch_Weight);
-
-  Out_ProportionalBand_Pitch = (Kp_pitch_angle * Pitch_ProportionalBand);
-  Out_ProportionalBand_Pitch = constrain(Out_ProportionalBand_Pitch, -PID_Limit / pitch_Weight, PID_Limit / pitch_Weight);
-
-  if (error_pitch > Pitch_ProportionalBand)
-  {
-    pitch_PID = Out_ProportionalBand_Pitch;
-  }
-  else if (error_pitch < -Pitch_ProportionalBand)
-  {
-    pitch_PID = -Out_ProportionalBand_Pitch;
-  }
-
-  // Yaw
-  error_yaw = yaw_des - (dpsZ - init_dpsZ);
-  integral_yaw = integral_yaw_prev + error_yaw * deltaTime;
-  integral_yaw = constrain(integral_yaw, -i_limit, i_limit);
-  derivative_yaw = -(error_yaw - error_yaw_prev) / deltaTime;
-  derivative_yaw = alpha_derivative * derivative_yaw + (1.0 - alpha_des) * derivative_yaw_pre;
-  derivative_yaw_pre = derivative_yaw;
-  yaw_PID = yaw_Weight * (Kp_yaw * error_yaw + Ki_yaw * integral_yaw + Kd_yaw * derivative_yaw);
-  yaw_PID = constrain(yaw_PID, -PID_Limit, PID_Limit);
-
-  // Update roll variables
-  integral_roll_prev = integral_roll;
-  integral_pitch_prev = integral_pitch;
-  error_yaw_prev = error_yaw;
-  error_pitch_prev = error_pitch;
-  error_roll_prev = error_roll;
-  integral_yaw_prev = integral_yaw;
-}
-
-void controlMixer()
-{
-  m1_command_scaled = (thro_des) + PID_Adjuster * (-pitch_Weight * pitch_PID + roll_Weight * roll_PID + yaw_PID);
-  m2_command_scaled = (thro_des) + PID_Adjuster * (-pitch_Weight * pitch_PID - roll_Weight * roll_PID - yaw_PID);
-  m3_command_scaled = (thro_des) + PID_Adjuster * (pitch_Weight * pitch_PID - roll_Weight * roll_PID + yaw_PID);
-  m4_command_scaled = (thro_des) + PID_Adjuster * (pitch_Weight * pitch_PID + roll_Weight * roll_PID - yaw_PID);
-
-  m1_command_scaled = constrain(m1_command_scaled, 0, 1.0);
-  m2_command_scaled = constrain(m2_command_scaled, 0, 1.0);
-  m3_command_scaled = constrain(m3_command_scaled, 0, 1.0);
-  m4_command_scaled = constrain(m4_command_scaled, 0, 1.0);
-}
-
-void scaleCommands()
-{
-  // DESCRIPTION: Scale normalized actuator commands to values for ESC protocol
-  // Scale to Servo PWM 0-180 degrees for stop to full speed.  No need to constrain since mx_command_scaled already is.
-  m1_command_PWM = m1_command_scaled * throttle_max;
-  m2_command_PWM = m2_command_scaled * throttle_max;
-  m3_command_PWM = m3_command_scaled * throttle_max;
-  m4_command_PWM = m4_command_scaled * throttle_max;
-}
-
-void getRadioSticks()
-{
-  // 各PWM入力値を channelValues 配列から割り当て
-  PWM_throttle = getChannelValue(2);
-  PWM_roll = getChannelValue(0);
-  PWM_Elevation = getChannelValue(1);
-  PWM_Rudd = getChannelValue(3);
-
-  if (getChannelValue(6) <= 1500)
-  {
-    keep_rotating = true;
-  }
-  else
-  {
-    keep_rotating = false;
-  }
-
-  PWM_throttle_output = PWM_throttle;
-  PWM_roll_output = PWM_roll;
-  PWM_Elevation_output = PWM_Elevation;
-  PWM_Rudd_output = PWM_Rudd;
-
-  PWM_throttle = (stick_dampener)*PWM_throttle_prev + (1 - stick_dampener) * PWM_throttle;
-  PWM_roll = (1.0 - stick_dampener) * PWM_roll_prev + stick_dampener * PWM_roll;
-  PWM_Elevation = (1.0 - stick_dampener) * PWM_Elevation_prev + stick_dampener * PWM_Elevation;
-  PWM_Rudd = (1.0 - stick_dampener) * PWM_Rudd_prev + stick_dampener * PWM_Rudd;
-
-  PWM_throttle_prev = PWM_throttle;
-  PWM_roll_prev = PWM_roll;
-  PWM_Elevation_prev = PWM_Elevation;
-  PWM_Rudd_prev = PWM_Rudd;
-}
-
-void commandMotors()
-{
-  // ベーススロットル値を追加
-  m1_command_PWM += throttle_min;
-  m2_command_PWM += throttle_min;
-  m3_command_PWM += throttle_min;
-  m4_command_PWM += throttle_min;
-
-  // 各モーターのバッファ値を追加
-  m1_command_PWM += morter1_buffer;
-  m2_command_PWM += morter2_buffer;
-  m3_command_PWM += morter3_buffer;
-  m4_command_PWM += morter4_buffer;
-
-  // PWM値を範囲内に制限
-  m1_command_PWM = constrain(m1_command_PWM, throttle_min, throttle_Limit);
-  m2_command_PWM = constrain(m2_command_PWM, throttle_min, throttle_Limit);
-  m3_command_PWM = constrain(m3_command_PWM, throttle_min, throttle_Limit);
-  m4_command_PWM = constrain(m4_command_PWM, throttle_min, throttle_Limit);
-
-  // スロットルが0の場合モーターを回さないようにする
-  if (thro_des <= 0.02 && zero_throttle_safty && !keep_rotating)
-  {
-    m1_command_PWM = throttle_min;
-    m2_command_PWM = throttle_min;
-    m3_command_PWM = throttle_min;
-    m4_command_PWM = throttle_min;
-  }
-
-  // もしプロポとの通信が切れた場合モーターを停止する
-  bool allZero = true;
-  // チャンネル値をチェック
-  for (int i = 0; i < CHANNELS; i++)
-  {
-    Serial.print(channelValues[i]);
-    if (channelValues[i] != 0)
-    {
-      allZero = false;
-    }
-  }
-  if (allZero)
-  {
-    m1_command_PWM = throttle_min;
-    m2_command_PWM = throttle_min;
-    m3_command_PWM = throttle_min;
-    m4_command_PWM = throttle_min;
-
-    // Serial.println("All channels are zero. Setting PWM to throttle_min.");
-  }
-
-  // モーターにPWMを設定
-  setMotorPWM(m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM, false);
-}
-
-void calibrateESCs()
-{
-  Serial.println("Starting calibration");
-
-  setMotorPWM(throttle_min, throttle_min, throttle_min, throttle_min, true);
-  Serial.println("Setting maximum throttle");
-  delay(2000);
-  Serial.println("Setting minimum throttle");
-  delay(2000);
-}
-
-void setMotorPWM(int m1, int m2, int m3, int m4, bool cal)
-{
-  int duty1 = 0, duty2 = 0, duty3 = 0, duty4 = 0;
-
-  if (!cal && keep_rotating)
-  {
-    duty1 = constrain(m1, throttle_min + min_rotation, throttle_max);
-    duty2 = constrain(m2, throttle_min + min_rotation, throttle_max);
-    duty3 = constrain(m3, throttle_min + min_rotation, throttle_max);
-    duty4 = constrain(m4, throttle_min + min_rotation, throttle_max);
-  }
-  else
-  {
-    duty1 = constrain(m1, throttle_min, throttle_max);
-    duty2 = constrain(m2, throttle_min, throttle_max);
-    duty3 = constrain(m3, throttle_min, throttle_max);
-    duty4 = constrain(m4, throttle_min, throttle_max);
-  }
-
-  if (emergency)
-  {
-    ESC1.writeMicroseconds(throttle_min);
-    ESC2.writeMicroseconds(throttle_min);
-    ESC3.writeMicroseconds(throttle_min);
-    ESC4.writeMicroseconds(throttle_min);
-  }
-  else
-  {
-    ESC1.writeMicroseconds(duty1);
-    ESC2.writeMicroseconds(duty2);
-    ESC3.writeMicroseconds(duty3);
-    ESC4.writeMicroseconds(duty4);
-  }
-}
-
-void printRollPitchYaw()
-{
-  Serial.print(F(" roll_imu: "));
-  Serial.print(roll_IMU);
-  Serial.print(F(" pitch_imu: "));
-  Serial.print(pitch_IMU);
-  Serial.print(F(" yaw_imu: "));
-  Serial.println(yaw_IMU);
-}
-
-void printDes()
-{
-  Serial.print(F("  roll_des: "));
-  Serial.print(roll_des);
-  Serial.print(F("| pitch_des: "));
-  Serial.print(pitch_des);
-  Serial.print(F("| yaw_des: "));
-  Serial.println(yaw_des);
-}
-
-void printAcc()
-{
-  Serial.print(F(" AccX: "));
-  if (AccX >= 0)
-    Serial.print("+"); // 正なら "+" を付ける
-  Serial.print(AccX);
-
-  Serial.print(F(" AccY: "));
-  if (AccY >= 0)
-    Serial.print("+");
-  Serial.print(AccY);
-
-  Serial.print(F(" AccZ: "));
-  if (AccZ >= 0)
-    Serial.print("+");
-  Serial.println(AccZ);
-}
-
-void printGyro()
-{
-  Serial.print(F(" GyroX: "));
-  Serial.print(GyroX);
-  Serial.print(F(" GyroY: "));
-  Serial.print(GyroY);
-  Serial.print(F(" GyroZ: "));
-  Serial.println(GyroZ);
-}
-
-void printMotorCommands()
-{
-  Serial.print(F("["));
-  Serial.print(F("m1_command: "));
-  Serial.print(m1_command_PWM);
-  Serial.print(F(","));
-  // Serial.print(m1_command_scaled);
-
-  Serial.print(F("m2_command: "));
-  Serial.print(m2_command_PWM);
-  Serial.print(F(","));
-  //  Serial.print(F("  : "));
-  // Serial.print(m2_command_scaled);
-
-  Serial.print(F("m3_command: "));
-  Serial.print(m3_command_PWM);
-  Serial.print(F(","));
-  // Serial.print(F("  :  "));
-  // Serial.print(m3_command_scaled);
-  Serial.print(F("m4_command: "));
-  Serial.print(m4_command_PWM);
-  Serial.println(F("]"));
-  // Serial.print(F("  : "));
-  // Serial.print(m4_command_scaled);
-}
-
-void printPIDoutput()
-{
-  Serial.print(F("roll_PID: "));
-  if (roll_PID >= 0)
-    Serial.print("+"); // 正の値に "+" を付ける
-  Serial.print(roll_PID);
-
-  Serial.print(F(" pitch_PID: "));
-  if (pitch_PID >= 0)
-    Serial.print("+");
-  Serial.print(pitch_PID);
-
-  Serial.print(F(" yaw_PID: "));
-  if (yaw_PID >= 0)
-    Serial.print("+");
-  Serial.println(yaw_PID);
-}
-
-void printReceive()
-{
-  Serial.print(F(", \"PWM_throttle\": "));
-  Serial.print(PWM_throttle_output);
-  Serial.print(F(", \"PWM_roll\": "));
-  Serial.print(PWM_roll_output);
-  Serial.print(F(", \"PWM_Elevation\": "));
-  Serial.print(PWM_Elevation_output);
-  Serial.print(F(", \"PWM_Rudd\": "));
-  Serial.print(PWM_Rudd_output);
-}
-
-void printYawPID()
-{
-  Serial.print("yaw_des: ");
-  if (yaw_des >= 0)
-    Serial.print("+");
-  Serial.print(yaw_des);
-
-  Serial.print(", dpsZ: ");
-  if (dpsZ >= 0)
-    Serial.print("+");
-  Serial.print(dpsZ);
-
-  Serial.print(", error_yaw: ");
-  if (error_yaw >= 0)
-    Serial.print("+");
-  Serial.print(error_yaw);
-
-  Serial.print(", integral_yaw: ");
-  if (integral_yaw >= 0)
-    Serial.print("+");
-  Serial.print(integral_yaw);
-
-  Serial.print(", derivative_yaw: ");
-  if (derivative_yaw >= 0)
-    Serial.print("+");
-  Serial.print(derivative_yaw);
-
-  Serial.print(", yaw_PID: ");
-  if (yaw_PID >= 0)
-    Serial.print("+");
-  Serial.println(yaw_PID);
-}
-
-void printRollPID()
-{
-  Serial.print("roll_des: ");
-  if (roll_des >= 0)
-    Serial.print("+");
-  Serial.print(roll_des);
-
-  Serial.print(", roll_IMU: ");
-  if (roll_IMU >= 0)
-    Serial.print("+");
-  Serial.print(roll_IMU);
-
-  Serial.print(", error_roll: ");
-  if (error_roll >= 0)
-    Serial.print("+");
-  Serial.print(error_roll);
-
-  Serial.print(", integral_roll: ");
-  if (integral_roll >= 0)
-    Serial.print("+");
-  Serial.print(integral_roll);
-
-  Serial.print(", derivative_roll: ");
-  if (derivative_roll >= 0)
-    Serial.print("+");
-  Serial.print(derivative_roll);
-
-  Serial.print(", roll_PID: ");
-  if (roll_PID >= 0)
-    Serial.print("+");
-  Serial.println(roll_PID);
+  drone.update();
 }
